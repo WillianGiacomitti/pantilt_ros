@@ -1,0 +1,9 @@
+# Inicia uma inspecao a partir do IDLE.
+uint8 MODE_CENTER=0      # centraliza e retorna ao IDLE
+uint8 MODE_TRACK=1       # centraliza e mantem rastreamento ate /inspection/stop
+
+string equipment         # chave do equipment.yaml
+uint8 mode
+---
+bool accepted
+string message

@@ -1,0 +1,4 @@
+# Lista os equipamentos disponiveis (equipment.yaml cruzado com as classes do modelo).
+---
+string[] keys
+string[] labels

@@ -1,0 +1,23 @@
+# Centralizacao/rastreamento IBVS executado pelo visual_servo_node.
+
+# Goal
+uint8 MODE_CENTER=0      # termina com sucesso ao centralizar
+uint8 MODE_TRACK=1       # continua rastreando ate ser cancelado
+
+uint8 mode
+float32 tolerance_px     # erro maximo para considerar centralizado
+float32 hold_time_s      # tempo continuo dentro da tolerancia
+float32 lost_timeout_s   # tempo sem alvo ate abortar
+---
+# Result
+bool success
+string message
+float32 final_error_px       # e_r (Quadro 3 do TCC)
+float32 convergence_time_s   # t_c (Quadro 3 do TCC)
+---
+# Feedback
+float32 error_x
+float32 error_y
+float32 error_px
+bool target_visible
+bool centered

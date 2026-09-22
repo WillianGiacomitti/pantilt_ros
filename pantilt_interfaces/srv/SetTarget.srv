@@ -1,0 +1,6 @@
+# Define o filtro de classe do detector_node.
+# equipment = "" remove o filtro (detector volta a publicar todas as classes).
+string equipment
+---
+bool success
+string message

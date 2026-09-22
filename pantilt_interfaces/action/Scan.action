@@ -1,0 +1,15 @@
+# Varredura em zigue-zague executada pelo scan_node.
+# O inspection_manager cancela o goal quando o alvo e confirmado.
+
+# Goal
+float32 speed_deg_s      # 0 = usar parametro do no
+float32 timeout_s        # 0 = usar parametro do no
+---
+# Result
+bool completed           # true = padrao completo sem cancelamento
+string message
+---
+# Feedback
+float32 pan_deg
+float32 tilt_deg
+uint32 pass_index        # faixa de tilt atual

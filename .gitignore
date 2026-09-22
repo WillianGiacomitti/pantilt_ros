@@ -1,0 +1,24 @@
+# colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Pesos de modelos (não versionar)
+*.pt
+*.onnx
+*.engine
+models/
+
+# Gravações de ensaio
+*.db3
+*.mcap
+bags/
+
+# IDE
+.vscode/
+.idea/
