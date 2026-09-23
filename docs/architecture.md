@@ -194,6 +194,8 @@ Migrado do `pantilt_dockerfile`. É um driver puro: traduz ROS para o protocolo 
 | `pan_limits_deg` | [-30, 30] | Limite físico |
 | `tilt_limits_deg` | [-90, 90] | Limite físico |
 | `limit_margin_deg` | 1.0 | Margem antes do limite |
+| `reconnect_interval_s` | 1.0 | Espera entre tentativas de abrir a serial |
+| `stale_timeout_s` | 1.0 | Sem frames da ESP32 por mais que isso gera aviso em `/ptu/errors` |
 
 ### 4.8 Interface web (pantilt_web)
 

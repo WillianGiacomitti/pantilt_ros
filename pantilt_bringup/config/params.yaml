@@ -1,0 +1,14 @@
+# Parâmetros dos nós do pantilt_ros.
+# Nomes e padrões seguem docs/architecture.md (seção 4).
+# Unidades SI; graus só em parâmetros com sufixo _deg.
+
+serial_bridge_node:
+  ros__parameters:
+    device: "/dev/ttyUSB0"         # resolvido pelo entrypoint via VID:PID
+    baud: 921600                   # deve bater com SERIAL_BAUD do firmware
+    heartbeat_hz: 5.0              # deve ser maior que 1 / FAILSAFE_TIMEOUT_MS (2 Hz)
+    pan_limits_deg: [-30.0, 30.0]  # limite físico
+    tilt_limits_deg: [-90.0, 90.0] # limite físico
+    limit_margin_deg: 1.0          # margem antes do limite
+    reconnect_interval_s: 1.0      # espera entre tentativas de abrir a serial
+    stale_timeout_s: 1.0           # sem frames da ESP32 por mais que isso -> aviso em /ptu/errors

@@ -65,7 +65,7 @@ docs/                 architecture.md
 
 ## Estado atual
 
-- [x] `pantilt_interfaces`: definições criadas (validar com `colcon build`)
+- [ ] `pantilt_interfaces`: definições criadas (validar com `colcon build`)
 - [ ] `pantilt_hardware`: migrar `serial_bridge_node.py` do repo `pantilt_dockerfile`
 - [ ] `pantilt_hardware`: `command_mux`
 - [ ] `pantilt_perception`: `camera_node`, `detector_node`
