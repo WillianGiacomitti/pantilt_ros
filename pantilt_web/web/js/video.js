@@ -50,9 +50,11 @@ export function init() {
 
 function loadStream() {
   clearTimeout(retryTimer);
-  const { topic: t, type } = CONFIG.video;
+  const { topic: t, type, qos } = CONFIG.video;
   setHasVideo(false, 'Aguardando imagens');
-  img.src = `${CONFIG.videoBaseUrl}/stream?topic=${encodeURIComponent(t)}&type=${type}&_=${Date.now()}`;
+  // encodeURI preserva a "/": o web_video_server não decodifica "%2F" no tópico
+  img.src = `${CONFIG.videoBaseUrl}/stream?topic=${encodeURI(t)}&type=${type}` +
+            `&qos_profile=${qos}&_=${Date.now()}`;
 }
 
 function setHasVideo(hasVideo, reason = '') {

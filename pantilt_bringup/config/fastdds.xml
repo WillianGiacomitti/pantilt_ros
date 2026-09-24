@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Perfil do Fast DDS (RMW padrão do Humble) para o pantilt_ros.
+
+  Por quê: o segmento de memória compartilhada (SHM) padrão tem 512 KB, e uma
+  imagem 640x480 bgr8 tem 921 KB. Sem espaço no SHM, a mensagem vai por UDP
+  fragmentado e, com QoS BEST_EFFORT (sensor data), perde fragmentos: o
+  assinante recebia ~7 Hz de uma câmera a ~19 Hz. Com este perfil nos dois
+  lados, chega a taxa total.
+
+  Como ativar (em TODO processo ROS: nós, launch, ros2 CLI, daemon):
+    export FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/src/pantilt_ros/pantilt_bringup/config/fastdds.xml
+
+  Cada processo reserva segment_size em /dev/shm. O padrão do Docker (64 MB)
+  não comporta todos os nós: use shm_size >= 1 GB no container.
+  Detalhes: docs/ajustes_pantilt_dockerfile.md
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>shm_imagens</transport_id>
+      <type>SHM</type>
+      <!-- 10 MB: comporta o histórico de imagens do QoS sensor data (5 x 921 KB) com folga -->
+      <segment_size>10485760</segment_size>
+    </transport_descriptor>
+  </transport_descriptors>
+
+  <participant profile_name="pantilt_participante" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>shm_imagens</transport_id>
+      </userTransports>
+      <!-- Mantém os transportes padrão (UDP), usados na descoberta e entre máquinas -->
+      <useBuiltinTransports>true</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>

@@ -41,8 +41,13 @@ export const CONFIG = {
   },
 
   video: {
-    topic: '/perception/debug_image',
+    // Imagem com as bboxes do detector_node. Para testar só a câmera, abra a
+    // página com ?video_topic=/camera/image_raw
+    topic: query.get('video_topic') || '/perception/debug_image',
     type: 'mjpeg',
+    // Os tópicos de imagem usam QoS sensor data (BEST_EFFORT); sem isto o
+    // web_video_server assina como RELIABLE e não recebe nenhum quadro
+    qos: 'sensor_data',
   },
 
   topics: {
