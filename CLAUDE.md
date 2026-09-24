@@ -36,15 +36,15 @@ O projeto tem três repositórios:
 ## Comandos (dentro do container)
 
 ```bash
-cd /ros2_ws
-colcon build --symlink-install
-source install/setup.bash
+ws                                   # alias: cd /ros2_ws + source do ROS e do install/
+colcon build --symlink-install && ws
 
 # testes por camada (launch files em pantilt_bringup)
-ros2 launch pantilt_bringup hardware.launch.py
-ros2 launch pantilt_bringup perception.launch.py
-ros2 launch pantilt_bringup control.launch.py
-ros2 launch pantilt_bringup system.launch.py
+ros2 launch pantilt_bringup hardware.launch.py      # serial_bridge_node + command_mux
+ros2 launch pantilt_bringup control.launch.py       # scan_node
+ros2 launch pantilt_web web.launch.py               # página, rosbridge, web_video_server
+ros2 launch pantilt_bringup perception.launch.py    # (a criar, com o detector_node)
+ros2 launch pantilt_bringup system.launch.py        # (a criar)
 
 # conferir interfaces
 ros2 interface show pantilt_interfaces/action/Center
@@ -61,7 +61,8 @@ pantilt_manager/      inspection_manager, state_machine.py
 pantilt_web/          web/index.html + launch (http, rosbridge, web_video_server)
 pantilt_bringup/      launch/, config/{params.yaml, equipment.yaml, equipment_coco_test.yaml}
 pantilt_dataset/      capture_node (ferramenta auxiliar: vídeos para o dataset)
-docs/                 architecture.md
+docs/                 architecture.md (fonte da verdade), roteiros de teste (teste_*.md),
+                      ajustes_pantilt_dockerfile.md, diagnostico_encoders.md
 ```
 
 ## Estado atual
@@ -72,18 +73,39 @@ docs/                 architecture.md
 - [x] `pantilt_web`: migrar `index.html` e adicionar vídeo, seleção e status
 - [x] `pantilt_perception`: `camera_node`
 - [ ] `pantilt_perception`: `detector_node`
-- [ ] `pantilt_web`: testar com a camera
+- [x] `pantilt_web`: testar com a camera (`docs/teste_camera_web.md`)
 - [ ] `pantilt_control`: `visual_servo_node` (PID)
-- [ ] `pantilt_control`: `scan_node` (antecipado para a coleta de dataset)
-- [ ] `pantilt_interfaces`: `StartCapture.srv` e `CaptureStatus.msg`
+- [ ] `pantilt_control`: `scan_node`: implementado e testado com juntas simuladas; **teste no hardware bloqueado pelos encoders** (ver "Ponto atual")
+- [x] `pantilt_interfaces`: `StartCapture.srv` e `CaptureStatus.msg`
 - [ ] `pantilt_dataset`: `capture_node`
 - [ ] `pantilt_web`: painel de coleta de dataset e `dataset.launch.py`
 - [ ] `pantilt_manager`: `inspection_manager`
 - [ ] `pantilt_web`: testar com a inspecao
-- [ ] `pantilt_bringup`: launch files e config
+- [ ] `pantilt_bringup`: launch files e config (feitos: `hardware.launch.py`, `control.launch.py`; faltam `perception`, `dataset` e `system`)
 - [ ] `pantilt_control`: controlador fuzzy
 
 Atualize esta lista ao concluir cada item (o autor confirma).
+
+## Ponto atual e próximos passos (24/09/2026)
+
+**Objetivo em andamento: coleta de vídeos para treinar a YOLO.** O pan-tilt é levado a vários pontos da sala e grava vídeos dos objetos enquanto varre. Os quadros são extraídos e anotados depois. O plano, aprovado pelo autor, tem 4 etapas (architecture.md §4.4 e §4.9):
+
+| Etapa | Conteúdo | Situação |
+|---|---|---|
+| 0 | Contratos no architecture.md (v0.2) e neste arquivo | feita |
+| 1 | `StartCapture.srv`, `CaptureStatus.msg`, `pantilt_control/scan_node`, `control.launch.py` | feita; 15 testes pytest; validada com juntas simuladas |
+| 2 | `pantilt_dataset/capture_node`: grava MP4 + `.json` a partir de `/camera/image_raw`, cliente de `/control/scan`, services `/capture/*` | a fazer |
+| 3 | Painel de coleta na página, `dataset.launch.py`, `docs/teste_coleta_dataset.md` | a fazer |
+
+**Bloqueio atual: a telemetria de posição do firmware está errada.** O encoder do pan queimou (a telemetria fica em 0,000°) e o do tilt oscila cerca de ±2°. Com isso, os limites do bridge e o `scan_node` levam os eixos ao batente. Detalhes, evidências e critério de retorno estão em `docs/diagnostico_encoders.md`. O trabalho segue no `pantilt_firmware`: encoders via mux I2C, auto home pelo TMC2209 e aquecimento do motor do tilt.
+
+**Ao voltar do firmware, nesta ordem:**
+1. rodar os testes 1 a 5 de `docs/diagnostico_encoders.md` §5 (telemetria confiável nos dois eixos);
+2. aplicar as melhorias do `scan_node` (§4 do mesmo documento) e testar a varredura no hardware;
+3. se o firmware mudou o protocolo (ex.: erro de encoder, comando de home), atualizar o `serial_bridge_node` e o architecture.md §8 junto;
+4. seguir com as Etapas 2 e 3.
+
+O `capture_node` (Etapa 2) grava sem varredura (`scan=false`) e não depende dos encoders. Ele pode ser feito antes, se o firmware demorar.
 
 ## Armadilhas conhecidas
 
@@ -93,3 +115,7 @@ Atualize esta lista ao concluir cada item (o autor confirma).
 - **Protocolo serial:** definido em `pantilt_firmware/include/Serialprotocol.h`. Não altere tipos ou payloads sem alterar o firmware.
 - **rosbridge + actions:** a web não usa actions diretamente; usa os services `/inspection/*` e o tópico `/inspection/status`.
 - **Pesos `.pt`** não vão para o git (ver `.gitignore`).
+- **Telemetria = encoders:** a posição em `/joint_states` vem dos encoders AS5600, não da contagem de passos. Um encoder ruim produz um ângulo falso e plausível, e os limites do bridge e o `scan_node` confiam nele. Antes de qualquer malha fechada, confira `/joint_states` com jog curto (`docs/diagnostico_encoders.md`).
+- **Ctrl+C em nós com `SignalHandlerOptions.NO`:** o `KeyboardInterrupt` só chega quando a thread principal volta ao Python. Um `executor.spin()` sem timer fica bloqueado em C, e o nó não sai. Use laço com `spin_once(timeout_sec=0.1)`, como no `scan_node`.
+- **CLI do ROS lenta:** no volume 9p, um `ros2 topic echo`/`hz` leva vários segundos para começar a receber. Timeouts curtos dão falsa impressão de tópico mudo; para medir, prefira um script `rclpy` ou espere mais.
+- **Coleta de dataset e disco:** `/ros2_ws` é o `C:` do Windows, com pouco espaço livre. Nunca grave imagens cruas com `ros2 bag` por longos períodos (~20 MB/s); a coleta usa MP4.
