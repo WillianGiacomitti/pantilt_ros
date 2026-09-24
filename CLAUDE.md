@@ -69,7 +69,7 @@ docs/                 architecture.md
 - [X] `pantilt_hardware`: migrar `serial_bridge_node.py` do repo `pantilt_dockerfile`
 - [x] `pantilt_hardware`: `command_mux`
 - [x] `pantilt_web`: migrar `index.html` e adicionar vídeo, seleção e status
-- [ ] `pantilt_perception`: `camera_node`
+- [x] `pantilt_perception`: `camera_node`
 - [ ] `pantilt_perception`: `detector_node`
 - [ ] `pantilt_web`: testar com a camera
 - [ ] `pantilt_control`: `visual_servo_node` (PID)
