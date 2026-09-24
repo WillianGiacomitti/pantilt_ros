@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle PTU</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="vendor/roslib.min.js"></script>
+<script type="module" src="js/main.js"></script>
+</head>
+<body class="offline">
+
+<header class="topbar">
+  <h1>Controle PTU <span class="sub">inspeção servo visual</span></h1>
+  <div class="pills">
+    <div class="pill" id="state-pill" title="Estado do inspection_manager (/inspection/status)">
+      <span class="dot"></span><span class="pill-label">Inspeção</span><span id="state-text">—</span>
+    </div>
+    <div class="pill" id="source-pill" title="Fonte de controle ativa (/ptu/control_source)">
+      <span class="dot"></span><span class="pill-label">Fonte</span><span id="source-text">—</span>
+    </div>
+    <div class="pill" id="conn-pill" title="Conexão com o rosbridge">
+      <span class="dot"></span><span id="conn-text">Offline</span>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============ Coluna esquerda: vídeo, inspeção e diagnóstico ============ -->
+  <section class="left">
+
+    <div class="card video-card">
+      <img id="video" alt="Vídeo da câmera com detecções" draggable="false" hidden>
+      <div class="video-placeholder" id="video-placeholder">
+        <div class="ph-title">Sem vídeo</div>
+        <div class="ph-reason" id="video-reason">Aguardando imagens</div>
+        <code id="video-topic"></code>
+      </div>
+      <div class="auto-banner" id="auto-banner">
+        <strong>MODO AUTOMÁTICO ATIVO</strong>
+        <span id="auto-banner-detail"></span>
+      </div>
+      <div class="chip" id="det-chip" hidden><span id="det-count"></span></div>
+    </div>
+
+    <div class="bottom-row">
+
+      <div class="card insp-card" id="insp-panel">
+        <div class="card-title">
+          <span>Inspeção</span>
+          <span class="card-note" id="insp-note"></span>
+        </div>
+        <form id="insp-form" class="insp-form">
+          <select id="insp-equipment" data-requires="manager" aria-label="Equipamento"></select>
+          <div class="segmented no-select" role="radiogroup" aria-label="Modo">
+            <input type="radio" name="insp-mode" id="insp-mode-center" data-requires="manager" checked>
+            <label for="insp-mode-center" title="Centraliza e volta ao ocioso">Centralizar</label>
+            <input type="radio" name="insp-mode" id="insp-mode-track" data-requires="manager">
+            <label for="insp-mode-track" title="Centraliza e mantém o rastreamento até parar">Rastrear</label>
+          </div>
+          <button type="submit" class="btn" id="btn-insp-start">Iniciar</button>
+          <button type="button" class="btn btn-ghost" id="btn-insp-stop" data-requires="manager">Parar</button>
+        </form>
+        <dl class="insp-status">
+          <div><dt>Estado</dt><dd id="insp-state">—</dd></div>
+          <div><dt>Equipamento</dt><dd id="insp-current">—</dd></div>
+          <div><dt>Erro</dt><dd id="insp-error">—</dd></div>
+        </dl>
+        <div class="insp-message" id="insp-message"></div>
+      </div>
+
+      <div class="card diag-card">
+        <div class="card-title">
+          <span>Diagnóstico</span>
+          <span class="card-note" id="err-count"></span>
+        </div>
+        <div class="log-list" id="log-list"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ Coluna direita: controle manual ============ -->
+  <section class="right no-select">
+
+    <div class="card telem-card" id="telemetry">
+      <div class="telem-box">
+        <div class="telem-axis">Pan</div>
+        <div class="telem-val"><span id="pan-pos">0.0</span><small>°</small></div>
+        <div class="telem-vel"><b id="pan-vel">0.0</b> °/s</div>
+      </div>
+      <div class="telem-box">
+        <div class="telem-axis">Tilt</div>
+        <div class="telem-val"><span id="tilt-pos">0.0</span><small>°</small></div>
+        <div class="telem-vel"><b id="tilt-vel">0.0</b> °/s</div>
+      </div>
+    </div>
+
+    <div class="card jog-card">
+      <div class="card-title"><span>Jog (velocidade)</span></div>
+      <div class="speed-row">
+        <label>Pan <span><b id="speed-pan-lbl">30</b> °/s</span>
+          <input type="range" id="speed-pan">
+        </label>
+        <label>Tilt <span><b id="speed-tilt-lbl">20</b> °/s</span>
+          <input type="range" id="speed-tilt">
+        </label>
+      </div>
+      <div class="jog-grid">
+        <span></span>
+        <button type="button" class="jog-btn" data-axis="tilt" data-dir="1" data-requires="ros" draggable="false" aria-label="Tilt positivo">▲</button>
+        <span></span>
+        <button type="button" class="jog-btn" data-axis="pan" data-dir="-1" data-requires="ros" draggable="false" aria-label="Pan negativo">◄</button>
+        <button type="button" class="jog-btn stop" id="btn-stop" data-requires="ros" draggable="false">STOP</button>
+        <button type="button" class="jog-btn" data-axis="pan" data-dir="1" data-requires="ros" draggable="false" aria-label="Pan positivo">►</button>
+        <span></span>
+        <button type="button" class="jog-btn" data-axis="tilt" data-dir="-1" data-requires="ros" draggable="false" aria-label="Tilt negativo">▼</button>
+        <span></span>
+      </div>
+    </div>
+
+    <div class="card pos-card">
+      <div class="card-title"><span>Ir para posição</span></div>
+      <form id="pos-form" class="pos-form">
+        <label class="field">Pan (°)<input type="number" id="pos-pan" value="0" step="1"></label>
+        <label class="field">Tilt (°)<input type="number" id="pos-tilt" value="0" step="1"></label>
+        <button type="submit" class="btn" data-requires="ros">Mover</button>
+      </form>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-zero" data-requires="ros">Zerar eixos</button>
+    </div>
+
+    <button type="button" class="btn btn-danger btn-stop-all" id="btn-stop-all" data-requires="ros">Parar tudo</button>
+
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+</body>
+</html>

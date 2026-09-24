@@ -68,11 +68,13 @@ docs/                 architecture.md
 - [X] `pantilt_interfaces`: definições criadas (validar com `colcon build`)
 - [X] `pantilt_hardware`: migrar `serial_bridge_node.py` do repo `pantilt_dockerfile`
 - [x] `pantilt_hardware`: `command_mux`
+- [x] `pantilt_web`: migrar `index.html` e adicionar vídeo, seleção e status
 - [ ] `pantilt_perception`: `camera_node`, `detector_node`
+- [ ] `pantilt_web`: testar com a camera
 - [ ] `pantilt_control`: `visual_servo_node` (PID)
 - [ ] `pantilt_control`: `scan_node`
 - [ ] `pantilt_manager`: `inspection_manager`
-- [ ] `pantilt_web`: migrar `index.html` e adicionar vídeo, seleção e status
+- [ ] `pantilt_web`: testar com a inspecao
 - [ ] `pantilt_bringup`: launch files e config
 - [ ] `pantilt_control`: controlador fuzzy
 
