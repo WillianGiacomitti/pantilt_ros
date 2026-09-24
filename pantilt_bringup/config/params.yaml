@@ -17,3 +17,11 @@ command_mux:
   ros__parameters:
     operator_hold_s: 1.0           # janela de prioridade do operador após o último comando da web
     cmd_timeout_s: 0.3             # watchdog: fonte ativa em silêncio por mais que isso -> velocidade zero
+
+camera_node:
+  ros__parameters:
+    source: "0"                    # índice (/dev/videoN), URL (ex.: MJPEG do Windows) ou caminho de vídeo
+    width: 640                     # resolução solicitada (a fonte pode entregar outra; ver log)
+    height: 480
+    fps: 30.0                      # taxa máxima de publicação
+    frame_id: "camera_optical_frame"  # frame do header

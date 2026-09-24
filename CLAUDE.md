@@ -69,7 +69,8 @@ docs/                 architecture.md
 - [X] `pantilt_hardware`: migrar `serial_bridge_node.py` do repo `pantilt_dockerfile`
 - [x] `pantilt_hardware`: `command_mux`
 - [x] `pantilt_web`: migrar `index.html` e adicionar vídeo, seleção e status
-- [ ] `pantilt_perception`: `camera_node`, `detector_node`
+- [ ] `pantilt_perception`: `camera_node`
+- [ ] `pantilt_perception`: `detector_node`
 - [ ] `pantilt_web`: testar com a camera
 - [ ] `pantilt_control`: `visual_servo_node` (PID)
 - [ ] `pantilt_control`: `scan_node`
@@ -82,7 +83,8 @@ Atualize esta lista ao concluir cada item (o autor confirma).
 
 ## Armadilhas conhecidas
 
-- **Webcam no WSL2:** o kernel padrão normalmente não tem driver UVC. Por isso o `camera_node` aceita URL como `source` (stream MJPEG do Windows).
+- **Webcam no WSL2:** no ambiente atual (kernel WSL 6.18) o driver UVC funciona: a câmera USB, anexada com `usbipd`, aparece como `/dev/video0` no container e entrega 640×480 MJPG a até 30 fps (menos com pouca luz, por causa da exposição automática). Use `source: "0"`. Em kernels sem UVC, o `camera_node` também aceita URL como `source` (stream MJPEG do Windows).
+- **Imagens via DDS:** o SHM padrão do Fast DDS (512 KB) não comporta uma imagem 640×480 (921 KB). Sem ajuste, os quadros vão por UDP e se perdem em BEST_EFFORT. Todo processo ROS precisa de `FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/src/pantilt_ros/pantilt_bringup/config/fastdds.xml` e o container precisa de `/dev/shm` bem maior que 64 MB (ver `docs/ajustes_pantilt_dockerfile.md`). O `web_video_server` só recebe tópicos BEST_EFFORT com `qos_profile=sensor_data` na URL do stream, e não decodifica `%2F`: o tópico vai na URL com `/` literal.
 - **Heartbeat serial:** o fail-safe do firmware é de 500 ms. O heartbeat do bridge deve ser de 5 Hz, nunca 2 Hz.
 - **Protocolo serial:** definido em `pantilt_firmware/include/Serialprotocol.h`. Não altere tipos ou payloads sem alterar o firmware.
 - **rosbridge + actions:** a web não usa actions diretamente; usa os services `/inspection/*` e o tópico `/inspection/status`.
