@@ -6,7 +6,7 @@ O repositório `pantilt_ros` já contém o necessário:
 - o perfil do Fast DDS (`pantilt_bringup/config/fastdds.xml`);
 - a URL do web_video_server com `qos_profile=sensor_data`.
 
-Falta o ambiente do container. Hoje ele está ajustado à mão e de forma **temporária** (ver seção 6).
+Falta o ambiente do container. Hoje ele está ajustado à mão e de forma **temporária** (ver seção 7).
 
 ---
 
@@ -121,7 +121,38 @@ fi
 
 ---
 
-## 6. Estado atual do container (temporário)
+## 6. Ajuste 5: alias `ws` e diretório inicial
+
+O `docker exec -it ptu_web_bridge bash` abre em `/app` (o `WORKDIR` do Dockerfile), sem o ambiente ROS carregado. O alias `ws` entra no workspace e faz os `source` na ordem certa: primeiro o underlay (`/opt/ros/humble`), depois o `install/` do workspace, se existir.
+
+1. Crie o arquivo `bash_aliases` na raiz do repositório `pantilt_dockerfile`:
+   ```bash
+   # Workspace ROS 2 do pan-tilt: entra em /ros2_ws e carrega o ambiente
+   alias ws='cd /ros2_ws && source /opt/ros/humble/setup.bash && if [ -f install/setup.bash ]; then source install/setup.bash; else echo "[ws] install/ ausente: rode colcon build --symlink-install e depois ws"; fi'
+   ```
+
+2. Copie-o no Dockerfile. O `.bashrc` padrão do root já carrega o `~/.bash_aliases`:
+   ```dockerfile
+   COPY bash_aliases /root/.bash_aliases
+   ```
+   O `COPY` evita escapar as aspas do alias num `RUN echo`.
+
+3. Opcional: se o `/app` não tiver outro uso, troque o diretório inicial:
+   ```dockerfile
+   WORKDIR /ros2_ws
+   ```
+
+Não acrescente `source` ao `/root/.bashrc`: ele fica no padrão da imagem, e o ambiente é carregado explicitamente com `ws`. Depois de um `colcon build`, rode `ws` de novo para carregar pacotes novos.
+
+Uso:
+```bash
+docker exec -it ptu_web_bridge bash
+ws
+```
+
+---
+
+## 7. Estado atual do container (temporário)
 
 Até o `pantilt_dockerfile` ser atualizado, o container atual foi ajustado à mão:
 
@@ -134,7 +165,7 @@ Se o container só reiniciar, refaça o `mount`. Depois de aplicar os ajustes 1 
 
 ---
 
-## 7. Verificação depois do rebuild
+## 8. Verificação depois do rebuild
 
 ```bash
 docker exec -it <container> bash
@@ -159,7 +190,7 @@ Com tudo rodando, `df -h /dev/shm` deve mostrar algumas dezenas de MB usados, lo
 
 ---
 
-## 8. Alternativa considerada: Cyclone DDS
+## 9. Alternativa considerada: Cyclone DDS
 
 Trocar o RMW para o Cyclone DDS (`ros-humble-rmw-cyclonedds-cpp` e `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`) também resolve a perda por fragmentação na mesma máquina. Não foi adotado agora:
 
