@@ -6,7 +6,7 @@ Este documento é a **fonte da verdade** para nomes de nós, tópicos, services,
 
 - **Autor:** Willian Luiz Giacomitti
 - **Orientador:** Prof. Dr. Ronnier Frates Rohrich
-- **Versão do documento:** 0.1 (22/09/2026)
+- **Versão do documento:** 0.2 (24/09/2026): ferramenta de coleta de dataset (`pantilt_dataset`) e detalhes do `scan_node`
 - **Plataforma:** ROS 2 Humble · Python (rclpy) · Docker em Windows/WSL2
 
 ---
@@ -86,6 +86,9 @@ Camadas e pacotes:
 | Acionamento | `pantilt_hardware` | `command_mux`, `serial_bridge_node` |
 | Operador | `pantilt_web` | `index.html` + rosbridge + web_video_server |
 | Integração | `pantilt_bringup` | launch files e configuração |
+| Ferramenta auxiliar | `pantilt_dataset` | `capture_node` (coleta de vídeos para o dataset) |
+
+O `pantilt_dataset` não faz parte do fluxo de inspeção. Ele serve para gravar os vídeos que formam o dataset de treino da YOLO, usando a câmera e a varredura do sistema (seção 4.9).
 
 ---
 
@@ -139,11 +142,21 @@ Orquestra a inspeção pela máquina de estados da seção 6. Carrega o `equipme
 
 Servidor da action `/control/scan`. Executa uma varredura em zigue-zague: percorre o pan de um limite ao outro em uma faixa de tilt, troca de faixa e repete. Usa `/joint_states` para saber a posição e publica apenas velocidades em `/ptu/cmd_vel_auto`. Publica somente enquanto há um goal ativo.
 
+- **Padrão:** move um eixo por vez, começando pela ponta do pan mais próxima da posição atual. Termina com `completed=true` depois de percorrer todas as faixas de tilt.
+- **Goal:** `speed_deg_s` e `timeout_s` iguais a 0 usam os parâmetros do nó. Um goal novo substitui o anterior.
+- **Parada:** publica velocidade zero uma vez ao terminar, ser cancelado ou abortar.
+- **Aborto:** para e aborta com o motivo em `message` em dois casos:
+  - sem `/joint_states` por mais de 0,5 s;
+  - com velocidade comandada, nenhum eixo se move por mais de 3 s. É o caso de eixo travado ou de sentido de giro invertido, que leva o eixo ao limite do bridge. O jog do operador move o eixo e não dispara o aborto.
+- **Término normal:** ao fim do padrão, `completed=true`. Se `timeout_s` esgotar antes, o goal termina com `completed=false`, sem ser abortado.
+- **Goals recusados:** velocidade negativa ou acima de 30°/s, e timeout negativo.
+
 | Parâmetro | Padrão | Descrição |
 |---|---|---|
 | `pan_min_deg` / `pan_max_deg` | -28 / 28 | Margem de 2° dos limites físicos (±30°) |
 | `tilt_levels_deg` | [-20, 0, 20] | Faixas de tilt percorridas |
 | `speed_deg_s` | 15.0 | Velocidade de varredura (baixa, para a YOLO acompanhar) |
+| `timeout_s` | 60.0 | Tempo máximo de um goal (0 no goal usa este valor) |
 | `rate_hz` | 20.0 | Taxa do laço |
 
 ### 4.5 `visual_servo_node` (pantilt_control)
@@ -209,6 +222,30 @@ A página `index.html` é servida por HTTP e se comunica via rosbridge (roslib.j
 
 A web usa services mais o tópico de status, e não actions diretamente, porque o suporte a actions do ROS 2 no rosbridge/roslibjs do Humble é limitado.
 
+A página também tem um painel de coleta de dataset (seção 4.9), que usa os services `/capture/*` e o tópico `/capture/status`.
+
+### 4.9 `capture_node` (pantilt_dataset)
+
+Ferramenta auxiliar para montar o dataset de treino. Grava `/camera/image_raw` em vídeo e, opcionalmente, mantém o pan-tilt varrendo com o `scan_node`. Para a web, cumpre o papel que o `inspection_manager` cumpre na inspeção: atende os services da página e é cliente da action `/control/scan`.
+
+- **Gravação:** um MP4 por sessão em `output_dir`, com o nome `AAAAMMDD_HHMMSS_<sessao>.mp4`, e um `.json` de metadados com sessão, horários, duração, quadros, taxa real, resolução e parâmetros da varredura. Uma gravação sem nenhum quadro não deixa arquivo.
+- **Varredura:** com `scan=true` no `/capture/start`, envia goals `Scan` em sequência enquanto grava. O `/capture/stop` cancela o goal. O jog do operador continua com prioridade pelo `command_mux`, sem interromper a gravação.
+- **Disco:** recusa o início, ou encerra a gravação com o arquivo finalizado, se o espaço livre em `output_dir` ficar abaixo de `min_free_gb`.
+- A escrita do vídeo roda numa thread própria, com fila. Quadros descartados por fila cheia são contados em `CaptureStatus.dropped`.
+
+Interfaces (em `pantilt_interfaces`):
+
+- `srv/StartCapture`: requisição `session` (texto livre, limpo para `[a-z0-9_-]` no nome do arquivo), `scan` (bool) e `speed_deg_s` (0 = padrão do `scan_node`); resposta `accepted`, `message` e `file`.
+- `msg/CaptureStatus`: `header`, `recording`, `scanning`, `session`, `file`, `elapsed_s`, `frames`, `dropped` e `message`. É publicado a 2 Hz e a cada mudança.
+
+| Parâmetro | Padrão | Descrição |
+|---|---|---|
+| `output_dir` | `/ros2_ws/datasets` | Pasta dos vídeos (fora do `src/` e do git; visível no Windows) |
+| `record_fps` | 15.0 | Taxa máxima gravada |
+| `fourcc` | `mp4v` | Codec do OpenCV |
+| `min_free_gb` | 1.0 | Espaço livre mínimo para gravar |
+| `queue_size` | 30 | Tamanho da fila do escritor |
+
 ---
 
 ## 5. Contratos de comunicação
@@ -230,6 +267,7 @@ A web usa services mais o tópico de status, e não actions diretamente, porque 
 | `/ptu/control_source` | `std_msgs/String` | command_mux | inspection_manager, web | transient_local |
 | `/joint_states` | `sensor_msgs/JointState` | serial_bridge_node | scan_node, web | padrão |
 | `/ptu/errors` | `std_msgs/String` | serial_bridge_node | web | transient_local |
+| `/capture/status` | `pantilt_interfaces/CaptureStatus` | capture_node | web | transient_local |
 
 Convenção do `Twist` para o PTU (mantida do sistema atual): `angular.z` = pan, `angular.y` = tilt, em rad/s. Juntas em `JointState`: `pan_joint` e `tilt_joint`, em rad.
 
@@ -242,12 +280,14 @@ Convenção do `Twist` para o PTU (mantida do sistema atual): `angular.z` = pan,
 | `/inspection/list_equipment` | `pantilt_interfaces/ListEquipment` | web → inspection_manager |
 | `/perception/set_target` | `pantilt_interfaces/SetTarget` | inspection_manager → detector_node |
 | `/ptu/set_zero` | `std_srvs/Trigger` | web → serial_bridge_node |
+| `/capture/start` | `pantilt_interfaces/StartCapture` | web → capture_node |
+| `/capture/stop` | `std_srvs/Trigger` | web → capture_node |
 
 ### 5.3 Actions
 
 | Nome | Tipo | Cliente → Servidor |
 |---|---|---|
-| `/control/scan` | `pantilt_interfaces/Scan` | inspection_manager → scan_node |
+| `/control/scan` | `pantilt_interfaces/Scan` | inspection_manager, capture_node → scan_node |
 | `/control/center` | `pantilt_interfaces/Center` | inspection_manager → visual_servo_node |
 
 As definições completas estão em `pantilt_interfaces/msg`, `srv` e `action`.
@@ -395,5 +435,7 @@ A ordem prioriza uma fatia vertical funcionando antes dos ensaios:
 7. Interface web: vídeo, seleção de equipamento e aviso de modo automático.
 8. Controlador fuzzy e comparação com o PID.
 9. Scripts de ensaio (rosbag e extração de métricas).
+
+Fora da ordem acima, o `scan_node` foi antecipado junto com o `pantilt_dataset` (seção 4.9), porque a coleta de vídeos para o treino da YOLO depende dele.
 
 Status de cada item: ver seção "Estado atual" no `CLAUDE.md`.

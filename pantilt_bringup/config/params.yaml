@@ -25,3 +25,12 @@ camera_node:
     height: 480
     fps: 30.0                      # taxa máxima de publicação
     frame_id: "camera_optical_frame"  # frame do header
+
+scan_node:
+  ros__parameters:
+    pan_min_deg: -28.0             # margem de 2° dos limites físicos (±30°)
+    pan_max_deg: 28.0
+    tilt_levels_deg: [-20.0, 0.0, 20.0]  # faixas de tilt (use sempre ponto decimal: lista de double)
+    speed_deg_s: 15.0              # velocidade da varredura (máx. 30); baixa para a YOLO acompanhar
+    timeout_s: 60.0                # tempo máximo de um goal (0 no goal usa este valor)
+    rate_hz: 20.0                  # taxa do laço

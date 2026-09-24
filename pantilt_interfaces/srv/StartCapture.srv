@@ -1,0 +1,10 @@
+# Inicia uma gravacao de video para o dataset (capture_node).
+# O nome da sessao entra no nome do arquivo, limpo para [a-z0-9_-].
+
+string session           # local/cena da gravacao (ex.: "mesa_janela")
+bool scan                # true = mantem o pan-tilt varrendo (action /control/scan)
+float32 speed_deg_s      # velocidade da varredura; 0 = parametro do scan_node
+---
+bool accepted
+string message
+string file              # caminho do video (vazio se recusado)

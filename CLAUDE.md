@@ -60,6 +60,7 @@ pantilt_control/      scan_node, visual_servo_node, controllers/{pid,fuzzy}.py
 pantilt_manager/      inspection_manager, state_machine.py
 pantilt_web/          web/index.html + launch (http, rosbridge, web_video_server)
 pantilt_bringup/      launch/, config/{params.yaml, equipment.yaml, equipment_coco_test.yaml}
+pantilt_dataset/      capture_node (ferramenta auxiliar: vídeos para o dataset)
 docs/                 architecture.md
 ```
 
@@ -73,7 +74,10 @@ docs/                 architecture.md
 - [ ] `pantilt_perception`: `detector_node`
 - [ ] `pantilt_web`: testar com a camera
 - [ ] `pantilt_control`: `visual_servo_node` (PID)
-- [ ] `pantilt_control`: `scan_node`
+- [ ] `pantilt_control`: `scan_node` (antecipado para a coleta de dataset)
+- [ ] `pantilt_interfaces`: `StartCapture.srv` e `CaptureStatus.msg`
+- [ ] `pantilt_dataset`: `capture_node`
+- [ ] `pantilt_web`: painel de coleta de dataset e `dataset.launch.py`
 - [ ] `pantilt_manager`: `inspection_manager`
 - [ ] `pantilt_web`: testar com a inspecao
 - [ ] `pantilt_bringup`: launch files e config
