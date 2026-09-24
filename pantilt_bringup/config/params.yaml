@@ -12,3 +12,8 @@ serial_bridge_node:
     limit_margin_deg: 1.0          # margem antes do limite
     reconnect_interval_s: 1.0      # espera entre tentativas de abrir a serial
     stale_timeout_s: 1.0           # sem frames da ESP32 por mais que isso -> aviso em /ptu/errors
+
+command_mux:
+  ros__parameters:
+    operator_hold_s: 1.0           # janela de prioridade do operador após o último comando da web
+    cmd_timeout_s: 0.3             # watchdog: fonte ativa em silêncio por mais que isso -> velocidade zero

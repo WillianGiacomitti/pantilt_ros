@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'serial_bridge_node = pantilt_hardware.serial_bridge_node:main',
+            'command_mux = pantilt_hardware.command_mux:main',
         ],
     },
 )
