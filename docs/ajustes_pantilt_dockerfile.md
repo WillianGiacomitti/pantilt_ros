@@ -6,7 +6,17 @@ O repositório `pantilt_ros` já contém o necessário:
 - o perfil do Fast DDS (`pantilt_bringup/config/fastdds.xml`);
 - a URL do web_video_server com `qos_profile=sensor_data`.
 
-Falta o ambiente do container. Hoje ele está ajustado à mão e de forma **temporária** (ver seção 7).
+## Status
+
+Conferido no container em 2026-09-24. Marque aqui ao aplicar cada ajuste no `pantilt_dockerfile`.
+
+- [x] **Ajuste 1** (§2): perfil do Fast DDS em todo o container. A variável está no ambiente do container (PID 1), não no `.bashrc`.
+- [x] **Ajuste 2** (§3): `/dev/shm` de 1 GB desde a criação do container.
+- [x] **Ajuste 3** (§4): câmera USB. O container roda com todas as capabilities e enxerga `/dev/video*`. O `usbipd attach` continua manual, a cada sessão.
+- [x] **Ajuste 4** (§5): aviso do perfil ausente no `/entrypoint.sh`.
+- [x] Ajustes manuais antigos removidos (§7): o `/root/.bashrc` voltou ao padrão da imagem.
+- [ ] **Ajuste 5** (§6): alias `ws` no Dockerfile. Por enquanto, existe só no container atual.
+- [ ] **Ajuste 5, opcional** (§6): `WORKDIR /ros2_ws` no lugar de `/app`.
 
 ---
 
@@ -154,39 +164,34 @@ ws
 
 ## 7. Estado atual do container (temporário)
 
-Até o `pantilt_dockerfile` ser atualizado, o container atual foi ajustado à mão:
+Os ajustes 1 a 4 já estão no `pantilt_dockerfile`. O `mount -o remount` do `/dev/shm` e o `export` no `/root/.bashrc`, que eram os ajustes manuais anteriores, não são mais necessários, e o `/root/.bashrc` voltou ao padrão da imagem.
+
+Resta um ajuste manual, que existe só no container atual:
 
 | Ajuste manual | Some quando |
 |---|---|
-| `mount -o remount,size=1G /dev/shm` | o container **reinicia** |
-| `export FASTRTPS_DEFAULT_PROFILES_FILE=...` no fim do `/root/.bashrc` | o container é **recriado** |
+| `/root/.bash_aliases` com o alias `ws` (§6) | o container é **recriado** |
 
-Se o container só reiniciar, refaça o `mount`. Depois de aplicar os ajustes 1 e 2 e recriar o container, **remova o bloco do `/root/.bashrc`**, se ele ainda existir, para não haver duas fontes da mesma configuração.
+Se o container for recriado antes do ajuste 5, recrie o arquivo com o conteúdo da §6. Não coloque `source` no `/root/.bashrc`.
 
 ---
 
 ## 8. Verificação depois do rebuild
 
 ```bash
-docker exec -it <container> bash
+docker exec -it ptu_web_bridge bash
+pwd                                       # /ros2_ws, se o WORKDIR foi trocado
+cat ~/.bash_aliases                       # alias ws (ajuste 5)
 echo $FASTRTPS_DEFAULT_PROFILES_FILE      # caminho do fastdds.xml
 df -h /dev/shm                            # Size 1.0G
-ls /dev/video*                            # /dev/video0
+ls /sys/class/video4linux/                # video0 e video1, com a câmera anexada
 
-source /opt/ros/humble/setup.bash && cd /ros2_ws
-colcon build --symlink-install && source install/setup.bash
+ws
+colcon build --symlink-install && ws
 ros2 daemon stop                          # o daemon reinicia com o perfil no próximo comando
-
-# terminal 1
-ros2 run pantilt_perception camera_node --ros-args \
-  --params-file src/pantilt_ros/pantilt_bringup/config/params.yaml
-# terminal 2: deve mostrar a taxa da câmera (~19-30 Hz conforme a luz), não ~7 Hz
-ros2 topic hz /camera/image_raw
-# terminal 3: web; abra http://localhost:8000/?video_topic=/camera/image_raw no Windows
-ros2 launch pantilt_web web.launch.py
 ```
 
-Com tudo rodando, `df -h /dev/shm` deve mostrar algumas dezenas de MB usados, longe de 1 GB.
+O teste completo de câmera e web está em `docs/teste_camera_web.md`. Com tudo rodando, `df -h /dev/shm` deve mostrar algumas dezenas de MB usados, longe de 1 GB.
 
 ---
 
