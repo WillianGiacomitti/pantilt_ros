@@ -61,8 +61,9 @@ pantilt_manager/      inspection_manager, state_machine.py
 pantilt_web/          web/index.html + launch (http, rosbridge, web_video_server)
 pantilt_bringup/      launch/, config/{params.yaml, equipment.yaml, equipment_coco_test.yaml}
 pantilt_dataset/      capture_node (ferramenta auxiliar: vídeos para o dataset)
-docs/                 architecture.md (fonte da verdade), roteiros de teste (teste_*.md),
-                      ajustes_pantilt_dockerfile.md, diagnostico_encoders.md
+docs/                 architecture.md (fonte da verdade), testes.md (roteiros de teste por pacote),
+                      ajustes_pantilt_dockerfile.md, diagnostico_encoders.md (histórico),
+                      SerialProtocol.h (cópia do protocolo do firmware)
 ```
 
 ## Estado atual
@@ -73,9 +74,9 @@ docs/                 architecture.md (fonte da verdade), roteiros de teste (tes
 - [x] `pantilt_web`: migrar `index.html` e adicionar vídeo, seleção e status
 - [x] `pantilt_perception`: `camera_node`
 - [ ] `pantilt_perception`: `detector_node`
-- [x] `pantilt_web`: testar com a camera (`docs/teste_camera_web.md`)
+- [x] `pantilt_web`: testar com a camera (`docs/testes.md` §2 e §3)
 - [ ] `pantilt_control`: `visual_servo_node` (PID)
-- [ ] `pantilt_control`: `scan_node`: implementado e testado com juntas simuladas; **teste no hardware bloqueado pelos encoders** (ver "Ponto atual")
+- [x] `pantilt_control`: `scan_node`: testado com juntas simuladas e no hardware (29/09/2026); melhorias de `docs/diagnostico_encoders.md` §4 pendentes
 - [x] `pantilt_interfaces`: `StartCapture.srv` e `CaptureStatus.msg`
 - [ ] `pantilt_dataset`: `capture_node`
 - [ ] `pantilt_web`: painel de coleta de dataset e `dataset.launch.py`
@@ -86,26 +87,24 @@ docs/                 architecture.md (fonte da verdade), roteiros de teste (tes
 
 Atualize esta lista ao concluir cada item (o autor confirma).
 
-## Ponto atual e próximos passos (24/09/2026)
+## Ponto atual e próximos passos (29/09/2026)
 
 **Objetivo em andamento: coleta de vídeos para treinar a YOLO.** O pan-tilt é levado a vários pontos da sala e grava vídeos dos objetos enquanto varre. Os quadros são extraídos e anotados depois. O plano, aprovado pelo autor, tem 4 etapas (architecture.md §4.4 e §4.9):
 
 | Etapa | Conteúdo | Situação |
 |---|---|---|
 | 0 | Contratos no architecture.md (v0.2) e neste arquivo | feita |
-| 1 | `StartCapture.srv`, `CaptureStatus.msg`, `pantilt_control/scan_node`, `control.launch.py` | feita; 15 testes pytest; validada com juntas simuladas |
+| 1 | `StartCapture.srv`, `CaptureStatus.msg`, `pantilt_control/scan_node`, `control.launch.py` | feita |
 | 2 | `pantilt_dataset/capture_node`: grava MP4 + `.json` a partir de `/camera/image_raw`, cliente de `/control/scan`, services `/capture/*` | a fazer |
-| 3 | Painel de coleta na página, `dataset.launch.py`, `docs/teste_coleta_dataset.md` | a fazer |
+| 3 | Painel de coleta na página, `dataset.launch.py`, seção de coleta em `docs/testes.md` | a fazer |
 
-**Bloqueio atual: a telemetria de posição do firmware está errada.** O encoder do pan queimou (a telemetria fica em 0,000°) e o do tilt oscila cerca de ±2°. Com isso, os limites do bridge e o `scan_node` levam os eixos ao batente. Detalhes, evidências e critério de retorno estão em `docs/diagnostico_encoders.md`. O trabalho segue no `pantilt_firmware`: encoders via mux I2C, auto home pelo TMC2209 e aquecimento do motor do tilt.
+**Bloqueio dos encoders resolvido (29/09/2026).** O firmware foi corrigido (encoders via mux I2C) e a varredura funcionou no hardware. O histórico está em `docs/diagnostico_encoders.md`. O protocolo do firmware ganhou os erros 8 a 18 e as mensagens de home (`MSG_HOME_REQ/ACK`, 0x09/0x0A); a cópia está em `docs/SerialProtocol.h`. O home ainda não está implementado no firmware.
 
-**Ao voltar do firmware, nesta ordem:**
-1. rodar os testes 1 a 5 de `docs/diagnostico_encoders.md` §5 (telemetria confiável nos dois eixos);
-2. aplicar as melhorias do `scan_node` (§4 do mesmo documento) e testar a varredura no hardware;
-3. se o firmware mudou o protocolo (ex.: erro de encoder, comando de home), atualizar o `serial_bridge_node` e o architecture.md §8 junto;
-4. seguir com as Etapas 2 e 3.
+**Próximos passos, nesta ordem:**
+1. atualizar o protocolo no host: `ERROR_CODES` 8–18 e constantes do home em `serial_protocol.py`, e a §8 do architecture.md (sem implementar o home);
+2. seguir com as Etapas 2 e 3.
 
-O `capture_node` (Etapa 2) grava sem varredura (`scan=false`) e não depende dos encoders. Ele pode ser feito antes, se o firmware demorar.
+Pendência sem prazo: as melhorias do `scan_node` em `docs/diagnostico_encoders.md` §4.
 
 ## Armadilhas conhecidas
 
@@ -115,7 +114,7 @@ O `capture_node` (Etapa 2) grava sem varredura (`scan=false`) e não depende dos
 - **Protocolo serial:** definido em `pantilt_firmware/include/Serialprotocol.h`. Não altere tipos ou payloads sem alterar o firmware.
 - **rosbridge + actions:** a web não usa actions diretamente; usa os services `/inspection/*` e o tópico `/inspection/status`.
 - **Pesos `.pt`** não vão para o git (ver `.gitignore`).
-- **Telemetria = encoders:** a posição em `/joint_states` vem dos encoders AS5600, não da contagem de passos. Um encoder ruim produz um ângulo falso e plausível, e os limites do bridge e o `scan_node` confiam nele. Antes de qualquer malha fechada, confira `/joint_states` com jog curto (`docs/diagnostico_encoders.md`).
+- **Telemetria = encoders:** a posição em `/joint_states` vem dos encoders AS5600, não da contagem de passos. Um encoder ruim produz um ângulo falso e plausível, e os limites do bridge e o `scan_node` confiam nele. Antes de qualquer malha fechada, confira `/joint_states` com jog curto (`docs/testes.md` §1.2).
 - **Ctrl+C em nós com `SignalHandlerOptions.NO`:** o `KeyboardInterrupt` só chega quando a thread principal volta ao Python. Um `executor.spin()` sem timer fica bloqueado em C, e o nó não sai. Use laço com `spin_once(timeout_sec=0.1)`, como no `scan_node`.
 - **CLI do ROS lenta:** no volume 9p, um `ros2 topic echo`/`hz` leva vários segundos para começar a receber. Timeouts curtos dão falsa impressão de tópico mudo; para medir, prefira um script `rclpy` ou espere mais.
 - **Coleta de dataset e disco:** `/ros2_ws` é o `C:` do Windows, com pouco espaço livre. Nunca grave imagens cruas com `ros2 bag` por longos períodos (~20 MB/s); a coleta usa MP4.

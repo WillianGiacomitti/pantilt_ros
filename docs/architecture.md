@@ -229,7 +229,7 @@ A página também tem um painel de coleta de dataset (seção 4.9), que usa os s
 Ferramenta auxiliar para montar o dataset de treino. Grava `/camera/image_raw` em vídeo e, opcionalmente, mantém o pan-tilt varrendo com o `scan_node`. Para a web, cumpre o papel que o `inspection_manager` cumpre na inspeção: atende os services da página e é cliente da action `/control/scan`.
 
 - **Gravação:** um MP4 por sessão em `output_dir`, com o nome `AAAAMMDD_HHMMSS_<sessao>.mp4`, e um `.json` de metadados com sessão, horários, duração, quadros, taxa real, resolução e parâmetros da varredura. Uma gravação sem nenhum quadro não deixa arquivo.
-- **Varredura:** com `scan=true` no `/capture/start`, envia goals `Scan` em sequência enquanto grava. O `/capture/stop` cancela o goal. O jog do operador continua com prioridade pelo `command_mux`, sem interromper a gravação.
+- **Varredura:** com `scan=true` no `/capture/start`, envia goals `Scan` em sequência enquanto grava. O `/capture/stop` cancela o goal. O jog do operador continua com prioridade pelo `command_mux`, sem interromper a gravação. Se a varredura for interrompida (goal recusado, abortado ou cancelado por outro cliente), a gravação continua sem varrer. Com `scan=true` e o `scan_node` indisponível, o início é recusado.
 - **Disco:** recusa o início, ou encerra a gravação com o arquivo finalizado, se o espaço livre em `output_dir` ficar abaixo de `min_free_gb`.
 - A escrita do vídeo roda numa thread própria, com fila. Quadros descartados por fila cheia são contados em `CaptureStatus.dropped`.
 
@@ -382,6 +382,10 @@ Formato do frame: `[0xA5][0x5A][TYPE][LEN][PAYLOAD...][CRC8]`. O CRC-8 usa o pol
 | `MSG_HEARTBEAT` | 0x06 | bidirecional | — |
 | `MSG_ERROR` | 0x07 | ESP32 → host | uint8 code (`ERR_*`) |
 | `MSG_BOOT_INFO` | 0x08 | ESP32 → host | uint8 reset_reason, uint32 free_heap |
+| `MSG_HOME_REQ` | 0x09 | host → ESP32 | uint8 eixo (0 pan, 1 tilt, 2 ambos); definido no firmware, ainda não usado pelo host |
+| `MSG_HOME_ACK` | 0x0A | ESP32 → host | uint8 eixo, uint8 sucesso; definido no firmware, ainda não usado pelo host |
+
+Os códigos `ERR_*` do `MSG_ERROR` estão em `SerialProtocol.h` e espelhados em `serial_protocol.py` (`ERROR_CODES`).
 
 A telemetria é enviada a 20 Hz. O fail-safe do firmware para os motores após 500 ms sem nenhum frame recebido.
 
@@ -393,7 +397,8 @@ A telemetria é enviada a 20 Hz. O fail-safe do firmware para os motores após 5
 |---|---|---|
 | Firmware | fail-safe de 500 ms | perda de comunicação com o host |
 | Firmware | watchdog de tasks (3 s) | travamento do firmware |
-| Firmware (futuro) | fim de curso via TMC2209 e limites por software | colisão mecânica |
+| Firmware | limites por software | colisão mecânica |
+| Firmware (futuro) | home por fim de curso |
 | `serial_bridge_node` | limites de ângulo por software | comandos fora da faixa física |
 | `command_mux` | watchdog de comando (0,3 s) | nó de controle travado com velocidade não nula |
 | `command_mux` | prioridade do operador | conflito entre modo automático e manual |

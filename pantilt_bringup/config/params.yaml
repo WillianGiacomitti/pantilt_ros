@@ -34,3 +34,11 @@ scan_node:
     speed_deg_s: 15.0              # velocidade da varredura (máx. 30); baixa para a YOLO acompanhar
     timeout_s: 60.0                # tempo máximo de um goal (0 no goal usa este valor)
     rate_hz: 20.0                  # taxa do laço
+
+capture_node:
+  ros__parameters:
+    output_dir: "/ros2_ws/datasets"  # pasta dos vídeos (fora do src/ e do git; visível no Windows)
+    record_fps: 15.0               # taxa máxima gravada (o MP4 declara esta taxa)
+    fourcc: "mp4v"                 # codec do OpenCV (4 caracteres)
+    min_free_gb: 1.0               # espaço livre mínimo para iniciar e continuar gravando
+    queue_size: 30                 # fila do escritor; cheia -> quadros descartados (CaptureStatus.dropped)

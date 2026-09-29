@@ -191,7 +191,7 @@ colcon build --symlink-install && ws
 ros2 daemon stop                          # o daemon reinicia com o perfil no próximo comando
 ```
 
-O teste completo de câmera e web está em `docs/teste_camera_web.md`. Com tudo rodando, `df -h /dev/shm` deve mostrar algumas dezenas de MB usados, longe de 1 GB.
+O teste completo de câmera e web está em `docs/testes.md` (seções 2 e 3). Com tudo rodando, `df -h /dev/shm` deve mostrar algumas dezenas de MB usados, longe de 1 GB.
 
 ---
 
