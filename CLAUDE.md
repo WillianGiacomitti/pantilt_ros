@@ -78,7 +78,7 @@ docs/                 architecture.md (fonte da verdade), testes.md (roteiros de
 - [ ] `pantilt_control`: `visual_servo_node` (PID)
 - [x] `pantilt_control`: `scan_node`: testado com juntas simuladas e no hardware (29/09/2026); melhorias de `docs/diagnostico_encoders.md` §4 pendentes
 - [x] `pantilt_interfaces`: `StartCapture.srv` e `CaptureStatus.msg`
-- [ ] `pantilt_dataset`: `capture_node`
+- [X] `pantilt_dataset`: `capture_node`
 - [ ] `pantilt_web`: painel de coleta de dataset e `dataset.launch.py`
 - [ ] `pantilt_manager`: `inspection_manager`
 - [ ] `pantilt_web`: testar com a inspecao
@@ -95,7 +95,7 @@ Atualize esta lista ao concluir cada item (o autor confirma).
 |---|---|---|
 | 0 | Contratos no architecture.md (v0.2) e neste arquivo | feita |
 | 1 | `StartCapture.srv`, `CaptureStatus.msg`, `pantilt_control/scan_node`, `control.launch.py` | feita |
-| 2 | `pantilt_dataset/capture_node`: grava MP4 + `.json` a partir de `/camera/image_raw`, cliente de `/control/scan`, services `/capture/*` | a fazer |
+| 2 | `pantilt_dataset/capture_node`: grava MP4 + `.json` a partir de `/camera/image_raw`, cliente de `/control/scan`, services `/capture/*` | feita |
 | 3 | Painel de coleta na página, `dataset.launch.py`, seção de coleta em `docs/testes.md` | a fazer |
 
 **Bloqueio dos encoders resolvido (29/09/2026).** O firmware foi corrigido (encoders via mux I2C) e a varredura funcionou no hardware. O histórico está em `docs/diagnostico_encoders.md`. O protocolo do firmware ganhou os erros 8 a 18 e as mensagens de home (`MSG_HOME_REQ/ACK`, 0x09/0x0A); a cópia está em `docs/SerialProtocol.h`. O home ainda não está implementado no firmware.
