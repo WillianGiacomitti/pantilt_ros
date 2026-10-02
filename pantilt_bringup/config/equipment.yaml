@@ -1,0 +1,20 @@
+# Equipamentos do TCC (seção 3.3) para o detector_node e o inspection_manager
+# (docs/architecture.md, seção 7).
+#
+# A chave é o que a interface e os services usam (/perception/set_target,
+# /inspection/start). class_name deve ser IGUAL ao nome da classe no modelo
+# (model.names): ajuste depois de rotular o dataset, se os nomes forem outros.
+
+equipment:
+  amortecedor:
+    label: "Amortecedor de vibração"
+    class_name: "amortecedor"
+  esfera:
+    label: "Esfera de sinalização"
+    class_name: "esfera"
+  isolador_bastao:
+    label: "Isolador bastão"
+    class_name: "isolador_bastao"
+  isolador_disco:
+    label: "Isolador disco"
+    class_name: "isolador_disco"

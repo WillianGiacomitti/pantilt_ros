@@ -26,6 +26,16 @@ camera_node:
     fps: 30.0                      # taxa máxima de publicação
     frame_id: "camera_optical_frame"  # frame do header
 
+detector_node:
+  ros__parameters:
+    model_path: "/ros2_ws/models/yolo11n.pt"   # pesos (fora do git; o nó não baixa); trocar pelo modelo treinado
+    # equipamentos: COCO de teste até o modelo do TCC existir; depois, .../config/equipment.yaml
+    equipment_file: "/ros2_ws/src/pantilt_ros/pantilt_bringup/config/equipment_coco_test.yaml"
+    conf_threshold: 0.5            # confiança mínima, em (0, 1]
+    imgsz: 640                     # tamanho de inferência (múltiplo de 32); menor = mais rápido em CPU
+    device: "cpu"                  # "cpu" ou "cuda:0" (o container atual não tem CUDA)
+    publish_debug_image: true      # imagem com as bboxes para a web (só desenhada com assinante)
+
 scan_node:
   ros__parameters:
     pan_min_deg: -28.0             # margem de 2° dos limites físicos (±30°)

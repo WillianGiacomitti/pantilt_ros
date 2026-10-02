@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'camera_node = pantilt_perception.camera_node:main',
+            'detector_node = pantilt_perception.detector_node:main',
         ],
     },
 )

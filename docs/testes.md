@@ -11,6 +11,8 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
   - [1.3 Testes de segurança do bridge](#13-testes-de-segurança-do-bridge)
   - [1.4 command_mux](#14-command_mux)
 - [2. pantilt_perception](#2-pantilt_perception)
+  - [2.1 camera_node](#21-camera_node)
+  - [2.2 detector_node](#22-detector_node)
 - [3. pantilt_web](#3-pantilt_web)
 - [4. pantilt_control](#4-pantilt_control)
 - [5. pantilt_dataset](#5-pantilt_dataset)
@@ -24,12 +26,12 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 | Pacote | O que valida | ESP32 | Câmera |
 |---|---|---|---|
 | `pantilt_hardware` | serial, telemetria, limites de ângulo, fail-safe, prioridade e watchdog do mux | sim (o mux pode ser testado sem ela) | não |
-| `pantilt_perception` | `camera_node`: taxa, QoS, perda e retorno da câmera | não | sim |
+| `pantilt_perception` | `camera_node`: taxa, QoS, perda e retorno da câmera; `detector_node`: detecções, filtro, alvo, imagem de debug, tempo de inferência | não | sim (ou um vídeo gravado) |
 | `pantilt_web` | vídeo na página, reconexão, jog com o hardware | só no jog | sim |
 | `pantilt_control` | `scan_node`: varredura, cancelamento, prioridade do operador, abortos | sim | não |
 | `pantilt_dataset` | `capture_node`: MP4 + `.json`, recusas, varredura durante a gravação, disco; `dataset.launch.py` e painel de coleta da página | só com varredura | sim |
 
-Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5). A seção 5.1 já foi aprovada no hardware (29/09/2026); para validar a Etapa 3, siga 5.2 → 5.3.
+Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5). As seções 5.1 a 5.3 foram aprovadas no hardware (29/09 e 02/10/2026). Para validar o `detector_node`, siga 2.2 e depois a seção 3 sem `?video_topic=`.
 
 ---
 
@@ -65,7 +67,7 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/ 2>/dev/null   # ESP32
 ls /sys/class/video4linux/                # video0 e video1: câmera anexada de fato
 
 # nenhum nó antigo rodando (ex.: iniciado pelo entrypoint)
-ps aux | grep -v grep | grep -E 'serial_bridge|command_mux|camera_node|scan_node|capture_node|web_video_server'
+ps aux | grep -v grep | grep -E 'serial_bridge|command_mux|camera_node|detector_node|scan_node|capture_node|web_video_server'
 
 # build
 colcon build --symlink-install && ws
@@ -254,9 +256,13 @@ Para registrar: `ros2 bag record /ptu/cmd_vel_auto /ptu/cmd_vel_web /ptu/cmd_pos
 
 ## 2. pantilt_perception
 
+O `perception.launch.py` sobe o `camera_node` e o `detector_node` juntos (seção 2.2). Para testar só a câmera, use o `ros2 run` da seção 2.1.
+
+### 2.1 camera_node
+
 **O que valida:** o `camera_node` publicando `/camera/image_raw` com a taxa e o QoS certos, e o comportamento quando a câmera some e volta.
 
-**Terminal 1: câmera.** Até existir o `perception.launch.py`, o nó sobe com `ros2 run`:
+**Terminal 1: câmera.** O nó sobe sozinho com `ros2 run`:
 
 ```bash
 ros2 run pantilt_perception camera_node --ros-args \
@@ -298,19 +304,112 @@ Para registrar (opcional): `ros2 bag record /camera/image_raw`. Ocupa ~20 MB/s a
 - Taxa em ~7 Hz é problema de transporte (perfil do Fast DDS ou `/dev/shm`), não da câmera.
 - Com pouca luz, a exposição automática derruba a taxa. Compare as medidas sempre com a mesma iluminação.
 
+### 2.2 detector_node
+
+**O que valida:** o `detector_node` (architecture.md §4.2):
+- a YOLO sobre `/camera/image_raw`;
+- as detecções em `/perception/detections`;
+- o filtro por `/perception/set_target`;
+- o alvo em `/perception/target`;
+- a imagem com as caixas em `/perception/debug_image`;
+- o tempo de inferência em CPU.
+
+Não precisa da ESP32. A fonte pode ser a câmera ou um vídeo já gravado em `/ros2_ws/datasets` (ensaio repetível).
+
+**Preparação (uma vez):** os pesos ficam em `/ros2_ws/models/`, fora do git, e o nó **não baixa** nada. Para o modelo de teste COCO:
+
+```bash
+mkdir -p /ros2_ws/models && cd /ros2_ws/models && python3 -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
+ls -la /ros2_ws/models/                   # yolo11n.pt, ~5,4 MB
+```
+
+O `params.yaml` aponta para esse arquivo e para o `equipment_coco_test.yaml`:
+- `garrafa` = `bottle`;
+- `copo` = `cup`;
+- `celular` = `cell phone`.
+
+Depois do treino, troque `model_path` e `equipment_file` (para `.../config/equipment.yaml`).
+
+**Terminal 1: percepção**
+
+```bash
+ros2 launch pantilt_bringup perception.launch.py
+```
+
+Esperado no log do detector (o carregamento leva alguns segundos):
+
+```
+Modelo /ros2_ws/models/yolo11n.pt carregado e aquecido em 4.8 s (80 classes)
+Equipamentos disponíveis: garrafa (bottle), copo (cup), celular (cell phone)
+Pronto: imgsz 640 | conf 0.50 | device "cpu" | debug_image sim | sem filtro
+```
+
+A cada 10 s:
+
+```
+10.6 quadros/s processados | inferência média 93 ms | atraso médio desde a captura 114 ms
+```
+
+**Terminal 2: observação**
+
+```bash
+ros2 topic echo /perception/detections --field detections   # class_id (nome) e score; bbox em px
+ros2 topic echo /perception/target                           # só com filtro
+ros2 topic hz /perception/detections                         # ~ taxa do log
+```
+
+**Terminal 3: filtro**
+
+```bash
+ros2 service call /perception/set_target pantilt_interfaces/srv/SetTarget "{equipment: 'garrafa'}"
+ros2 service call /perception/set_target pantilt_interfaces/srv/SetTarget "{equipment: ''}"   # remove
+```
+
+**Terminal 4 (opcional): página.** `ros2 launch pantilt_web web.launch.py` e `http://localhost:8080/`, sem `?video_topic=`: o vídeo mostra o `/perception/debug_image`.
+
+| # | Teste | Como | Esperado |
+|---|---|---|---|
+| 1 | Sem filtro | ponha pessoas e objetos diante da câmera | `/perception/detections` com todas as classes (ex.: `person`, `chair`, `bottle`); **nada** em `/perception/target` |
+| 2 | Imagem de debug | página aberta | caixas azuis com `classe confiança`, cruz no centro, faixa `Sem filtro \| N det. \| X ms`; chip de detecções sob o vídeo |
+| 3 | Filtro garrafa | `set_target` com `garrafa` | `success=True`, `Filtro: Garrafa (teste COCO) (bottle)`; `detections` só com `bottle`; `/perception/target` a cada quadro, com `equipment: garrafa` |
+| 4 | Alvo some e volta | esconda e mostre a garrafa | `detected: false` sem garrafa (com `image_width`/`image_height` preenchidos) e `true` com ela |
+| 5 | Sinal do erro | garrafa à direita do centro, depois abaixo | `error_x > 0` à direita; `error_y > 0` abaixo; perto da cruz, os dois perto de 0 |
+| 6 | Maior score | duas garrafas, uma perto (grande) e outra longe (pequena) | o alvo (caixa laranja, linha até o centro) é a de maior confiança × área, normalmente a grande |
+| 7 | Chave desconhecida | `set_target` com `xyz` | `success=False`, `equipamento "xyz" desconhecido. Disponíveis: garrafa, copo, celular` |
+| 8 | Remover o filtro | `set_target` com `''` | `Filtro removido: publicando todas as classes`; `/perception/target` para; `detections` volta a todas as classes |
+| 9 | Câmera parada | `pkill -INT -f lib/pantilt_perception/camera_node` | o detector para de publicar sem erro; em até 10 s, `Nenhum quadro de /camera/image_raw em 10 s (a câmera está rodando?)` |
+| 10 | Modelo ausente | launch parado: `ros2 run pantilt_perception detector_node --ros-args --params-file <params.yaml> -p model_path:=/nao/existe.pt` | `[FATAL] Parâmetro inválido: model_path "/nao/existe.pt" não encontrado. O nó não baixa pesos; ...` com o comando de download; o nó sai |
+| 11 | Parâmetro inválido | idem, com `-p imgsz:=600` | `[FATAL] Parâmetro inválido: imgsz=600 inválido: deve ser positivo e múltiplo de 32` |
+| 12 | Tempo por `imgsz` | repita o launch com uma cópia do `params.yaml` (seção 0) com `imgsz` 640, 480 e 320 | anote a taxa, a inferência e o atraso do log em cada caso, com a mesma cena |
+| 13 | Ensaio com vídeo gravado | cópia do `params.yaml` com `source: "/ros2_ws/datasets/<arquivo>.mp4"` no `camera_node` | o vídeo roda em laço; as detecções se repetem a cada volta (ensaio repetível, sem câmera) |
+
+Referência medida no desenvolvimento (02/10/2026), na CPU do container, sem ROS no meio: `imgsz` 640 = 73 ms, 480 = 46 ms e 320 = 32 ms por quadro. Com o nó completo, 640 deu ~10 quadros/s e ~115 ms de atraso desde a captura.
+
+Para registrar (opcional): `ros2 bag record /perception/detections /perception/target`. São mensagens pequenas; não grave a `debug_image`.
+
+### Preste atenção
+
+- **Só CPU:** o container não tem CUDA (`device: "cpu"`). O detector processa menos quadros que a câmera entrega. Os quadros que chegam durante uma inferência são **descartados de propósito**, para o alvo não ficar atrasado. A taxa do `/perception/detections` é a taxa do detector, não a da câmera.
+- **Memória:** a RAM do WSL é de ~3,7 GB. Com tudo rodando, confira `free -h`; se o sistema ficar lento, feche o navegador extra ou reduza o `imgsz`.
+- **Atraso:** o número do log (agora − instante da captura) é o que a malha IBVS vai sentir. Anote-o junto com o `imgsz` no teste 12: ele entra na escolha dos ganhos do `visual_servo_node`.
+- O `/perception/set_target` responde depois da inferência em andamento (até ~0,1 s).
+- O ultralytics cria `~/.config/Ultralytics/` na primeira execução. É esperado.
+- Classes do COCO estão em inglês (`bottle`, `cell phone`). O `class_name` do yaml precisa ser idêntico ao do modelo; um nome errado aparece no log como `Equipamento "..." ignorado: a classe "..." não existe no modelo`.
+
 ---
 
 ## 3. pantilt_web
 
 **O que valida:** o caminho `camera_node` → `/camera/image_raw` → `web_video_server` → página, a reconexão da página ao rosbridge e o jog com o hardware (a imagem se move junto com o pan-tilt).
 
-Enquanto o `detector_node` não existe, a página mostra `/camera/image_raw` no lugar do `/perception/debug_image`, via `?video_topic=`. A aba Coleta já usa `/camera/image_raw` sozinha (seção 5.3); o `?video_topic=`, quando presente, vale para as duas abas.
+A página mostra o `/perception/debug_image` (caixas do `detector_node`, seção 2.2). Para testar só a câmera, sem o detector, abra com `?video_topic=/camera/image_raw`. A aba Coleta já usa `/camera/image_raw` sozinha (seção 5.3); o `?video_topic=`, quando presente, vale para as duas abas.
 
 Endereços (no navegador do Windows):
 
 | O quê | URL |
 |---|---|
-| Página | `http://localhost:8080/?video_topic=/camera/image_raw` |
+| Página (vídeo com as caixas do detector) | `http://localhost:8080/` |
+| Página só com a câmera | `http://localhost:8080/?video_topic=/camera/image_raw` |
 | Página na aba Coleta (vídeo em `/camera/image_raw`) | `http://localhost:8080/?tab=coleta` |
 | Stream direto | `http://localhost:8081/stream?topic=/camera/image_raw&qos_profile=sensor_data` |
 | Tópicos que o web_video_server enxerga | `http://localhost:8081/` |
@@ -319,7 +418,7 @@ O `qos_profile=sensor_data` é obrigatório no stream direto. A página já o in
 
 **Terminais:**
 
-1. câmera, como na seção 2;
+1. câmera, como na seção 2.1 (ou percepção completa, como na seção 2.2, para a página sem `?video_topic=`);
 2. observação (`ros2 topic hz`, `ros2 topic info -v`);
 3. web: `ros2 launch pantilt_web web.launch.py`;
 4. hardware (só para o jog): `ros2 launch pantilt_bringup hardware.launch.py`.
@@ -590,6 +689,9 @@ Roteiro curto para gravar o dataset de verdade:
 | Página em `Servidor de vídeo indisponível` | web_video_server fora do ar ou em outra porta | confira o terminal da web; com outra porta, abra a página com `?video=<porta>` |
 | Tópico não encontrado no stream | tópico com `%2F` na URL | use `/` literal: o web_video_server não decodifica `%2F` |
 | Aba Coleta em `capture_node indisponível` | `capture_node` fora do ar ou travado (sem `/capture/status` há 2 s) | confira o terminal do launch; `ros2 node list`; suba de novo com o `dataset.launch.py` |
+| `[FATAL] ... model_path "..." não encontrado` no detector | pesos não baixados ou em outra pasta | baixe com o comando da seção 2.2 ou ajuste `model_path` |
+| Detector com poucos quadros/s ou atraso alto | inferência em CPU | reduza `imgsz` (480 ou 320); confira `free -h`; feche abas extras da página |
+| `/perception/target` não publica nada | sem filtro ativo (é o esperado) | `ros2 service call /perception/set_target ...` com uma chave do yaml |
 | `ros2 param dump` com valores diferentes do yaml | nó iniciado sem `--ros-args --params-file` (ex.: `--ros_param`, que é ignorado) | suba de novo com o comando da seção 2 |
 
 ---
@@ -598,6 +700,5 @@ Roteiro curto para gravar o dataset de verdade:
 
 Seções a acrescentar aqui quando os itens existirem:
 
-- `pantilt_perception`: `detector_node` (a página passa a abrir sem `?video_topic=`, mostrando `/perception/debug_image`);
 - `pantilt_control`: `visual_servo_node` (PID e fuzzy);
 - `pantilt_manager`: `inspection_manager` e inspeção pela página.

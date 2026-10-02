@@ -6,7 +6,7 @@ Este documento é a **fonte da verdade** para nomes de nós, tópicos, services,
 
 - **Autor:** Willian Luiz Giacomitti
 - **Orientador:** Prof. Dr. Ronnier Frates Rohrich
-- **Versão do documento:** 0.2 (24/09/2026): ferramenta de coleta de dataset (`pantilt_dataset`) e detalhes do `scan_node`
+- **Versão do documento:** 0.3 (02/10/2026): comportamento do `detector_node` detalhado (alvo só com filtro, quadros descartados, pesos locais) e `ListEquipment` lido só do yaml
 - **Plataforma:** ROS 2 Humble · Python (rclpy) · Docker em Windows/WSL2
 
 ---
@@ -111,14 +111,19 @@ Captura quadros e publica em `/camera/image_raw`. A fonte é configurável para 
 
 Executa a YOLO (Ultralytics), aplica o filtro de classe e seleciona o alvo.
 
-- **Sem filtro (IDLE):** publica todas as detecções em `/perception/detections`.
-- **Com filtro:** publica apenas a classe escolhida. Seleciona a bbox de maior `score = confiança × área_normalizada` e publica em `/perception/target`.
+- **Sem filtro (IDLE):** publica em `/perception/detections` as detecções de todas as classes do modelo. Não publica em `/perception/target`.
+- **Com filtro:** `/perception/detections` traz apenas a classe escolhida. A cada quadro processado, seleciona a bbox de maior `score = confiança × área_normalizada` (área da bbox dividida pela área da imagem) e publica em `/perception/target`, com `detected=false` quando não há candidato.
+- **Filtro:** definido por `/perception/set_target` com a chave do `equipment.yaml`; `""` remove o filtro. Uma chave desconhecida ou ausente do modelo é recusada (`success=false`).
 - **Mapeamento por nome:** ao iniciar, lê `model.names` do modelo e cruza com o `equipment.yaml`. IDs numéricos de classe nunca aparecem no código. Uma classe do YAML ausente no modelo gera aviso no log e é removida da lista, sem travar o nó.
+- **Quadros:** processa sempre o quadro mais recente (assinatura com fila de 1). Os quadros que chegam durante uma inferência são descartados, para não acumular atraso na malha IBVS.
+- **Header:** todas as saídas usam o header da imagem de origem (instante da captura). O `visual_servo_node` calcula o `dt` por esses timestamps.
+- **Imagem de debug:** só é desenhada quando `/perception/debug_image` tem assinante (ex.: a página aberta).
+- **Pesos:** o nó não baixa pesos. Se `model_path` não existir, encerra com erro e indica o comando de download. Os pesos ficam em `/ros2_ws/models/`, fora do git.
 
 | Parâmetro | Padrão | Descrição |
 |---|---|---|
-| `model_path` | `yolo11n.pt` | Pesos (arquivo fora do git) |
-| `equipment_file` | `config/equipment.yaml` | Mapeamento de equipamentos |
+| `model_path` | `/ros2_ws/models/yolo11n.pt` | Pesos (arquivo fora do git) |
+| `equipment_file` | `config/equipment_coco_test.yaml` (caminho absoluto no `params.yaml`) | Mapeamento de equipamentos; `config/equipment.yaml` depois do treino |
 | `conf_threshold` | 0.5 | Confiança mínima |
 | `imgsz` | 640 | Tamanho de inferência |
 | `device` | `cpu` | `cpu` ou `cuda:0` |
@@ -127,6 +132,8 @@ Executa a YOLO (Ultralytics), aplica o filtro de classe e seleciona o alvo.
 ### 4.3 `inspection_manager` (pantilt_manager)
 
 Orquestra a inspeção pela máquina de estados da seção 6. Carrega o `equipment.yaml`, atende os services da interface e é cliente das actions de varredura e centralização.
+
+O `/inspection/list_equipment` lista o `equipment.yaml` sem cruzar com as classes do modelo: só o `detector_node` carrega o modelo. Um equipamento ausente do modelo é recusado pelo `/perception/set_target`, e o gerenciador repassa a recusa à interface.
 
 | Parâmetro | Padrão | Descrição |
 |---|---|---|
