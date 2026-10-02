@@ -42,7 +42,8 @@ colcon build --symlink-install && ws
 # testes por camada (launch files em pantilt_bringup)
 ros2 launch pantilt_bringup hardware.launch.py      # serial_bridge_node + command_mux
 ros2 launch pantilt_bringup control.launch.py       # scan_node
-ros2 launch pantilt_web web.launch.py               # página, rosbridge, web_video_server
+ros2 launch pantilt_web web.launch.py               # página (8080), rosbridge (9090), web_video_server (8081)
+ros2 launch pantilt_bringup dataset.launch.py       # coleta: câmera + capture_node (+ hardware, controle e web)
 ros2 launch pantilt_bringup perception.launch.py    # (a criar, com o detector_node)
 ros2 launch pantilt_bringup system.launch.py        # (a criar)
 
@@ -79,30 +80,16 @@ docs/                 architecture.md (fonte da verdade), testes.md (roteiros de
 - [x] `pantilt_control`: `scan_node`: testado com juntas simuladas e no hardware (29/09/2026); melhorias de `docs/diagnostico_encoders.md` §4 pendentes
 - [x] `pantilt_interfaces`: `StartCapture.srv` e `CaptureStatus.msg`
 - [X] `pantilt_dataset`: `capture_node`
-- [ ] `pantilt_web`: painel de coleta de dataset e `dataset.launch.py`
+- [x] `pantilt_web`: painel de coleta de dataset e `dataset.launch.py`: testado no hardware (02/10/2026)
 - [ ] `pantilt_manager`: `inspection_manager`
 - [ ] `pantilt_web`: testar com a inspecao
-- [ ] `pantilt_bringup`: launch files e config (feitos: `hardware.launch.py`, `control.launch.py`; faltam `perception`, `dataset` e `system`)
+- [ ] `pantilt_bringup`: launch files e config (feitos: `hardware.launch.py`, `control.launch.py`, `dataset.launch.py`; faltam `perception` e `system`)
 - [ ] `pantilt_control`: controlador fuzzy
 
 Atualize esta lista ao concluir cada item (o autor confirma).
 
-## Ponto atual e próximos passos (29/09/2026)
 
-**Objetivo em andamento: coleta de vídeos para treinar a YOLO.** O pan-tilt é levado a vários pontos da sala e grava vídeos dos objetos enquanto varre. Os quadros são extraídos e anotados depois. O plano, aprovado pelo autor, tem 4 etapas (architecture.md §4.4 e §4.9):
-
-| Etapa | Conteúdo | Situação |
-|---|---|---|
-| 0 | Contratos no architecture.md (v0.2) e neste arquivo | feita |
-| 1 | `StartCapture.srv`, `CaptureStatus.msg`, `pantilt_control/scan_node`, `control.launch.py` | feita |
-| 2 | `pantilt_dataset/capture_node`: grava MP4 + `.json` a partir de `/camera/image_raw`, cliente de `/control/scan`, services `/capture/*` | feita |
-| 3 | Painel de coleta na página, `dataset.launch.py`, seção de coleta em `docs/testes.md` | a fazer |
-
-**Bloqueio dos encoders resolvido (29/09/2026).** O firmware foi corrigido (encoders via mux I2C) e a varredura funcionou no hardware. O histórico está em `docs/diagnostico_encoders.md`. O protocolo do firmware ganhou os erros 8 a 18 e as mensagens de home (`MSG_HOME_REQ/ACK`, 0x09/0x0A); a cópia está em `docs/SerialProtocol.h`. O home ainda não está implementado no firmware.
-
-**Próximos passos, nesta ordem:**
-1. atualizar o protocolo no host: `ERROR_CODES` 8–18 e constantes do home em `serial_protocol.py`, e a §8 do architecture.md (sem implementar o home);
-2. seguir com as Etapas 2 e 3.
+**Próximo passo:** `pantilt_perception/detector_node` (architecture.md §4.2), com o `perception.launch.py`. Enquanto o modelo próprio não estiver treinado, use o `yolo11n` com o `equipment_coco_test.yaml` (architecture.md §12, item 4).
 
 Pendência sem prazo: as melhorias do `scan_node` em `docs/diagnostico_encoders.md` §4.
 
@@ -110,6 +97,7 @@ Pendência sem prazo: as melhorias do `scan_node` em `docs/diagnostico_encoders.
 
 - **Webcam no WSL2:** no ambiente atual (kernel WSL 6.18) o driver UVC funciona: a câmera USB, anexada com `usbipd`, aparece como `/dev/video0` no container e entrega 640×480 MJPG a até 30 fps (menos com pouca luz, por causa da exposição automática). Use `source: "0"`. Em kernels sem UVC, o `camera_node` também aceita URL como `source` (stream MJPEG do Windows).
 - **Imagens via DDS:** o SHM padrão do Fast DDS (512 KB) não comporta uma imagem 640×480 (921 KB). Sem ajuste, os quadros vão por UDP e se perdem em BEST_EFFORT. Todo processo ROS precisa de `FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/src/pantilt_ros/pantilt_bringup/config/fastdds.xml` e o container precisa de `/dev/shm` bem maior que 64 MB (ver `docs/ajustes_pantilt_dockerfile.md`). O `web_video_server` só recebe tópicos BEST_EFFORT com `qos_profile=sensor_data` na URL do stream, e não decodifica `%2F`: o tópico vai na URL com `/` literal.
+- **Portas da web:** o docker-compose do `pantilt_dockerfile` publica só 8080 (página), 9090 (rosbridge) e 8081 (web_video_server). Esses são os padrões do `web.launch.py` e do `config.js`. Uma porta fora dessa lista funciona dentro do container (`curl`), mas não chega ao navegador do Windows.
 - **Heartbeat serial:** o fail-safe do firmware é de 500 ms. O heartbeat do bridge deve ser de 5 Hz, nunca 2 Hz.
 - **Protocolo serial:** definido em `pantilt_firmware/include/Serialprotocol.h`. Não altere tipos ou payloads sem alterar o firmware.
 - **rosbridge + actions:** a web não usa actions diretamente; usa os services `/inspection/*` e o tópico `/inspection/status`.

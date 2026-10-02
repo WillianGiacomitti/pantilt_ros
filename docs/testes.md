@@ -14,6 +14,10 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 - [3. pantilt_web](#3-pantilt_web)
 - [4. pantilt_control](#4-pantilt_control)
 - [5. pantilt_dataset](#5-pantilt_dataset)
+  - [5.1 capture_node](#51-capture_node)
+  - [5.2 dataset.launch.py](#52-datasetlaunchpy)
+  - [5.3 Painel de coleta](#53-painel-de-coleta)
+  - [5.4 Sessão de coleta](#54-sessão-de-coleta)
 - [6. Solução de problemas](#6-solução-de-problemas)
 - [7. Roteiros futuros](#7-roteiros-futuros)
 
@@ -23,9 +27,9 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 | `pantilt_perception` | `camera_node`: taxa, QoS, perda e retorno da câmera | não | sim |
 | `pantilt_web` | vídeo na página, reconexão, jog com o hardware | só no jog | sim |
 | `pantilt_control` | `scan_node`: varredura, cancelamento, prioridade do operador, abortos | sim | não |
-| `pantilt_dataset` | `capture_node`: MP4 + `.json`, recusas, varredura durante a gravação, disco | só com varredura | sim |
+| `pantilt_dataset` | `capture_node`: MP4 + `.json`, recusas, varredura durante a gravação, disco; `dataset.launch.py` e painel de coleta da página | só com varredura | sim |
 
-Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5).
+Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5). A seção 5.1 já foi aprovada no hardware (29/09/2026); para validar a Etapa 3, siga 5.2 → 5.3.
 
 ---
 
@@ -61,7 +65,7 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/ 2>/dev/null   # ESP32
 ls /sys/class/video4linux/                # video0 e video1: câmera anexada de fato
 
 # nenhum nó antigo rodando (ex.: iniciado pelo entrypoint)
-ps aux | grep -v grep | grep -E 'serial_bridge|command_mux|camera_node|scan_node|web_video_server'
+ps aux | grep -v grep | grep -E 'serial_bridge|command_mux|camera_node|scan_node|capture_node|web_video_server'
 
 # build
 colcon build --symlink-install && ws
@@ -300,15 +304,16 @@ Para registrar (opcional): `ros2 bag record /camera/image_raw`. Ocupa ~20 MB/s a
 
 **O que valida:** o caminho `camera_node` → `/camera/image_raw` → `web_video_server` → página, a reconexão da página ao rosbridge e o jog com o hardware (a imagem se move junto com o pan-tilt).
 
-Enquanto o `detector_node` não existe, a página mostra `/camera/image_raw` no lugar do `/perception/debug_image`, via `?video_topic=`.
+Enquanto o `detector_node` não existe, a página mostra `/camera/image_raw` no lugar do `/perception/debug_image`, via `?video_topic=`. A aba Coleta já usa `/camera/image_raw` sozinha (seção 5.3); o `?video_topic=`, quando presente, vale para as duas abas.
 
 Endereços (no navegador do Windows):
 
 | O quê | URL |
 |---|---|
-| Página | `http://localhost:8000/?video_topic=/camera/image_raw` |
-| Stream direto | `http://localhost:8080/stream?topic=/camera/image_raw&qos_profile=sensor_data` |
-| Tópicos que o web_video_server enxerga | `http://localhost:8080/` |
+| Página | `http://localhost:8080/?video_topic=/camera/image_raw` |
+| Página na aba Coleta (vídeo em `/camera/image_raw`) | `http://localhost:8080/?tab=coleta` |
+| Stream direto | `http://localhost:8081/stream?topic=/camera/image_raw&qos_profile=sensor_data` |
+| Tópicos que o web_video_server enxerga | `http://localhost:8081/` |
 
 O `qos_profile=sensor_data` é obrigatório no stream direto. A página já o inclui (`web/js/config.js`).
 
@@ -319,9 +324,9 @@ O `qos_profile=sensor_data` é obrigatório no stream direto. A página já o in
 3. web: `ros2 launch pantilt_web web.launch.py`;
 4. hardware (só para o jog): `ros2 launch pantilt_bringup hardware.launch.py`.
 
-Esperado no log do terminal 3: `Waiting For connections on 0.0.0.0:8080` (web_video_server) e `Rosbridge WebSocket server started on port 9090`.
+Esperado no log do terminal 3: `Waiting For connections on 0.0.0.0:8081` (web_video_server) e `Rosbridge WebSocket server started on port 9090`.
 
-Abra a página: `http://localhost:8000/?video_topic=/camera/image_raw`.
+Abra a página: `http://localhost:8080/?video_topic=/camera/image_raw`.
 
 - O painel mostra `Aguardando imagens` e, em seguida, o vídeo.
 - O código abaixo do painel mostra o tópico `/camera/image_raw`.
@@ -420,36 +425,40 @@ Para registrar: `ros2 bag record /joint_states /ptu/cmd_vel_auto /ptu/cmd_vel /p
 
 ## 5. pantilt_dataset
 
-**O que valida:** o `capture_node` (architecture.md §4.9), que grava `/camera/image_raw` em MP4, com um `.json` de metadados ao lado, e opcionalmente mantém a varredura ativa com goals `Scan` em sequência. Os vídeos vão para `/ros2_ws/datasets/` (no Windows: `ros2_ws\datasets`), com o nome `AAAAMMDD_HHMMSS_<sessao>.mp4`.
+**O que valida:** o `capture_node` (architecture.md §4.9), que grava `/camera/image_raw` em MP4, com um `.json` de metadados ao lado, e opcionalmente mantém a varredura ativa com goals `Scan` em sequência; o `dataset.launch.py`, que sobe a coleta com um comando; e o painel de coleta da página (aba **Coleta**). Os vídeos vão para `/ros2_ws/datasets/` (no Windows: `ros2_ws\datasets`), com o nome `AAAAMMDD_HHMMSS_<sessao>.mp4`.
 
-**Pré-requisitos:** a câmera funcionando (seção 2). Para os testes com varredura, também o hardware e o `scan_node`, com a seção 1.2 aprovada (como na seção 4). Confira o espaço livre antes: `df -h /ros2_ws`.
+**Pré-requisitos:** a câmera funcionando (seção 2). Para os testes com varredura, também o hardware, com a seção 1.2 aprovada (como na seção 4). Confira o espaço livre antes: `df -h /ros2_ws`.
 
-Até existir o `dataset.launch.py` (Etapa 3), os nós sobem com `ros2 run`.
+O `dataset.launch.py` sobe sempre o `camera_node` e o `capture_node`. Os argumentos ligam o resto:
 
-**Terminal 1: câmera** (o mesmo comando da seção 2)
+| Argumento | Padrão | O que inclui |
+|---|---|---|
+| `hardware` | `true` | `hardware.launch.py` (bridge e `command_mux`) e `control.launch.py` (`scan_node`): jog e varredura |
+| `web` | `true` | `web.launch.py` do `pantilt_web` (página, rosbridge e web_video_server) |
+| `params_file` | `config/params.yaml` | arquivo de parâmetros de todos os nós |
+
+O detector não sobe: a coleta não precisa da YOLO.
+
+### 5.1 capture_node
+
+Roteiro aprovado no hardware em 29/09/2026 (com `ros2 run`). Refaça só se o `capture_node` mudar.
+
+**Terminal 1: launch** (sem hardware nem página)
 
 ```bash
-ros2 run pantilt_perception camera_node --ros-args \
-  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml
+ros2 launch pantilt_bringup dataset.launch.py hardware:=false web:=false
 ```
 
-**Terminal 2: captura**
+Esperado no log: `Fonte aberta: 640x480 @ 30.0 fps (MJPG)` (camera_node) e `Saída: /ros2_ws/datasets | 15.0 fps | fourcc "mp4v" | mínimo 1.0 GB livres | fila 30` (capture_node).
 
-```bash
-ros2 run pantilt_dataset capture_node --ros-args \
-  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml
-```
-
-Esperado no log: `Saída: /ros2_ws/datasets | 15.0 fps | fourcc "mp4v" | mínimo 1.0 GB livres | fila 30`.
-
-**Terminal 3: observação**
+**Terminal 2: observação**
 
 ```bash
 ros2 topic echo /capture/status             # transient_local: mostra o estado atual ao conectar; 2 Hz
 ls -la /ros2_ws/datasets/
 ```
 
-**Terminal 4: comandos**
+**Terminal 3: comandos**
 
 ```bash
 # início sem varredura
@@ -460,7 +469,7 @@ ros2 service call /capture/start pantilt_interfaces/srv/StartCapture "{session: 
 ros2 service call /capture/stop std_srvs/srv/Trigger
 ```
 
-**Testes sem hardware** (só a câmera)
+**Testes sem hardware** (só a câmera; launch com `hardware:=false web:=false`)
 
 | # | Teste | Comando / ação | Esperado |
 |---|---|---|---|
@@ -469,31 +478,98 @@ ros2 service call /capture/stop std_srvs/srv/Trigger
 | 3 | Vídeo no Windows | abra o MP4 pelo Explorer | toca normalmente; anote o tamanho por minuto (`size_bytes` / `duration_s`) |
 | 4 | Início duplicado | com uma gravação ativa, outro início | `accepted=False`, `Já existe uma gravação ativa (...)`; a gravação atual continua |
 | 5 | Fim sem gravação | `/capture/stop` sem gravação ativa | `success=False`, `Nenhuma gravação ativa` |
-| 6 | Câmera parou | durante a gravação, Ctrl+C no terminal 1; depois suba a câmera de novo | em ~2 s, status `Sem quadros de /camera/image_raw há mais de 2 s (a câmera está rodando?)` e um aviso no log; a gravação continua; com a câmera de volta, o status volta a `Gravando` |
-| 7 | Gravação sem quadros | câmera parada; início e fim | `Nenhum quadro recebido; nada gravado`; nenhum arquivo criado |
-| 8 | Varredura sem `scan_node` | início com `scan: true` sem o `control.launch.py` | `accepted=False`, `scan_node indisponível: suba o control.launch.py ou use scan=false` |
+| 6 | Câmera parou | durante a gravação: `pkill -INT -f lib/pantilt_perception/camera_node`; depois `ros2 run pantilt_perception camera_node --ros-args --params-file <params.yaml>` | em ~2 s, status `Sem quadros de /camera/image_raw há mais de 2 s (a câmera está rodando?)` e um aviso no log; a gravação continua; com a câmera de volta, o status volta a `Gravando` |
+| 7 | Gravação sem quadros | câmera parada (como no teste 6); início e fim | `Nenhum quadro recebido; nada gravado`; nenhum arquivo criado |
+| 8 | Varredura sem `scan_node` | início com `scan: true` (launch com `hardware:=false`) | `accepted=False`, `scan_node indisponível: suba o control.launch.py ou use scan=false` |
 | 9 | Velocidade inválida | início com `speed_deg_s: 45.0` | `accepted=False`, `speed_deg_s=45.0 fora de [0, 30]°/s` |
-| 10 | Ctrl+C no nó | durante a gravação, Ctrl+C no terminal 2 | log `Nó encerrado. Gravado: ...`; MP4 e `.json` completos, com `end_reason: Nó encerrado` |
-| 11 | Pouco espaço | com o nó parado: `ros2 run pantilt_dataset capture_node --ros-args --params-file <params.yaml> -p min_free_gb:=10000.0`; depois um início | `accepted=False`, `Pouco espaço em disco: X GB livres (mínimo 10000.0 GB)` |
+| 10 | Ctrl+C no nó | durante a gravação, Ctrl+C no terminal 1 (encerra o launch) | log `Nó encerrado. Gravado: ...`; MP4 e `.json` completos, com `end_reason: Nó encerrado` |
+| 11 | Pouco espaço | com o launch parado, uma câmera com `ros2 run` (como no teste 6) e `ros2 run pantilt_dataset capture_node --ros-args --params-file <params.yaml> -p min_free_gb:=10000.0`; depois um início | `accepted=False`, `Pouco espaço em disco: X GB livres (mínimo 10000.0 GB)` |
 | 12 | Parâmetro inválido | `ros2 run pantilt_dataset capture_node --ros-args -p fourcc:=mp4` | `[FATAL] Parâmetro inválido: fourcc="mp4" inválido ...` e o nó sai |
 
-**Testes com varredura** (terminais extras com `ros2 launch pantilt_bringup hardware.launch.py` e `ros2 launch pantilt_bringup control.launch.py`; mecanismo zerado no centro; STOP à mão)
+**Testes com varredura.** Suba o launch com o hardware (`ros2 launch pantilt_bringup dataset.launch.py web:=false`, ou com a página para o teste 14). Mecanismo zerado no centro; STOP à mão. No teste 16, que derruba só o `scan_node`, use o `pkill` indicado.
 
 | # | Teste | Comando / ação | Esperado |
 |---|---|---|---|
 | 13 | Gravação com varredura | início com `scan: true` | status `scanning: true`, `Gravando com varredura (passada 1)`; o `scan_node` registra `Varredura iniciada`; ao fim do padrão, `Varredura terminada: Padrão completo` e logo outra `Varredura iniciada` (passada 2), sem parar a gravação |
 | 14 | Jog durante a gravação | segure um botão do jog na página | fonte `web`, o eixo obedece ao jog; a gravação não para; ao soltar, a varredura continua (como no teste 6 da seção 4) |
 | 15 | Fim durante a varredura | `/capture/stop` com a varredura ativa | o `scan_node` registra `Varredura cancelada` e os eixos param; `.json` com `scan.goals_sent`/`goals_succeeded` |
-| 16 | Varredura interrompida | durante a gravação com varredura, Ctrl+C no `control.launch.py` | status `scanning: false`, `Gravando sem varredura: interrompida, ...` (ex.: `scan_node saiu do ar`); a gravação continua; nenhum goal novo é enviado |
-| 17 | Ctrl+C durante a varredura | suba o controle de novo, início com varredura e Ctrl+C no terminal 2 | o `scan_node` registra `Varredura cancelada`; arquivo finalizado com `end_reason: Nó encerrado` |
+| 16 | Varredura interrompida | durante a gravação com varredura: `pkill -INT -f lib/pantilt_control/scan_node` | status `scanning: false`, `Gravando sem varredura: interrompida, ...` (ex.: `scan_node saiu do ar`); a gravação continua; nenhum goal novo é enviado |
+| 17 | Ctrl+C durante a varredura | reinicie o launch, início com varredura e Ctrl+C no terminal 1 (encerra o launch) | o `scan_node` registra `Varredura cancelada`; arquivo finalizado com `end_reason: Nó encerrado` |
+
+### 5.2 dataset.launch.py
+
+**O que valida:** que um único comando sobe a coleta inteira e que um único Ctrl+C a encerra com o arquivo finalizado e os eixos parados.
+
+| # | Teste | Comando / ação | Esperado |
+|---|---|---|---|
+| 1 | Argumentos | `ros2 launch pantilt_bringup dataset.launch.py --show-args` | lista `params_file`, `hardware` e `web` (e as portas do `web.launch.py`) |
+| 2 | Só a coleta | `ros2 launch pantilt_bringup dataset.launch.py hardware:=false web:=false`; `ros2 node list` | `/camera_node` e `/capture_node` |
+| 3 | Coleta + página | `... hardware:=false`; `ros2 node list` | os de cima + `/rosbridge_websocket` e `/web_video_server`; log `Waiting For connections on 0.0.0.0:8081` e `Rosbridge WebSocket server started on port 9090` |
+| 4 | Tudo | `ros2 launch pantilt_bringup dataset.launch.py`; `ros2 node list` | os de cima + `/serial_bridge_node`, `/command_mux` e `/scan_node`; log `Conectado a /dev/ttyUSB0 ...` e `Pan [-28.0°, 28.0°] \| faixas de tilt ...` |
+| 5 | Varredura sem hardware | launch do teste 3; início com `scan: true` (página ou CLI) | `accepted=False`, `scan_node indisponível: suba o control.launch.py ou use scan=false` |
+| 6 | Ctrl+C único sem varredura | launch do teste 3; gravação sem varredura por ~10 s; Ctrl+C no terminal do launch | log `Nó encerrado. Gravado: ...`; todos os processos com `process has finished cleanly`; `.json` com `end_reason: Nó encerrado` |
+| 7 | Ctrl+C único com varredura | launch do teste 4; gravação com varredura; Ctrl+C no meio de uma passada | os eixos param (o bridge envia zero ao sair); MP4 e `.json` finalizados com `end_reason: Nó encerrado` |
+| 8 | Parâmetros próprios | `cp` do `params.yaml` (seção 0) com `output_dir: "/tmp/ds"`; `... params_file:=/tmp/params_teste.yaml` | o log do capture_node mostra `Saída: /tmp/ds`; o vídeo vai para lá |
+
+No teste 6 (sem hardware), o encerramento foi conferido no desenvolvimento (02/10/2026): um vídeo de 61 s foi finalizado no Ctrl+C. O teste 7 é o que importa no hardware.
+
+### 5.3 Painel de coleta
+
+**O que valida:** a aba **Coleta** da página, que chama `/capture/start` e `/capture/stop` e mostra o `/capture/status`.
+
+**Terminal 1:** `ros2 launch pantilt_bringup dataset.launch.py` (tudo). **Terminal 2:** `ros2 topic echo /capture/status` e `ls -la /ros2_ws/datasets/`.
+
+Abra `http://localhost:8080/?tab=coleta`. O painel tem:
+
+- o nome da sessão;
+- **Varredura** (marcada por padrão) e a velocidade em °/s (0 = padrão do `scan_node`, 15°/s);
+- **Gravar** e **Parar**;
+- o estado, com o tempo, os quadros e o arquivo.
+
+| # | Teste | Como | Esperado |
+|---|---|---|---|
+| 1 | Abertura | página com `?tab=coleta` | aba Coleta selecionada; vídeo de `/camera/image_raw` (o código sob o placeholder mostra esse tópico); estado `Parado`; nota do card vazia |
+| 2 | Troca de aba | clique em Inspeção e depois em Coleta | na Inspeção o vídeo passa a `/perception/debug_image` e fica em `Aguardando imagens` (esperado sem o detector); na Coleta volta a câmera |
+| 3 | Sessão vazia | Gravar sem nome | o navegador pede o campo; nada é chamado |
+| 4 | Gravação sem varredura | desmarque Varredura, sessão `teste painel`, Gravar; ~20 s; Parar | toast `Gravando sem varredura em ...`; estado `Gravando` (vermelho), tempo e quadros subindo; chip `● REC mm:ss` no canto do vídeo e `●` na aba; os campos ficam bloqueados. No Parar: toast `Gravado: N quadros ...`; estado `Parado`; a mensagem mostra `Parada pelo operador. Gravado: ...`; o chip some |
+| 5 | Gravação com varredura | marque Varredura, velocidade 0, Gravar | estado `Gravando + varredura` (laranja); mensagem `Gravando com varredura (passada 1)`; **Fonte** = `auto`; o pan-tilt varre e a imagem acompanha |
+| 6 | Velocidade própria | Parar; velocidade 10, Gravar | varredura visivelmente mais lenta; log do scan_node com `10.0°/s` |
+| 7 | Jog durante a gravação | segure um botão do jog | **Fonte** = `web`, o eixo obedece; a gravação continua; ao soltar, ~1 s depois, a varredura continua |
+| 8 | Parar durante a varredura | Parar no painel | eixos param; scan_node `Varredura cancelada`; `.json` com `scan.goals_sent` ≥ 1 |
+| 9 | "Parar tudo" durante a varredura | Gravar com varredura; clique em **Parar tudo** | o eixo para; ~1 s depois a varredura **volta** (comportamento esperado, ver "Preste atenção"); a gravação continua |
+| 10 | Recusa | Parar; `pkill -INT -f lib/pantilt_control/scan_node`; Gravar com Varredura | toast e linha de mensagem em vermelho `Recusado: scan_node indisponível ...` por ~8 s; nada gravado |
+| 11 | Recarregar a página | durante uma gravação, F5 | o painel volta direto em `Gravando`, com o tempo correto (o status é transient_local) |
+| 12 | Duas abas do navegador | abra a página em outra aba; Parar numa delas | as duas mostram o mesmo estado |
+| 13 | capture_node fora do ar | durante uma gravação: `pkill -INT -f lib/pantilt_dataset/capture_node` | arquivo finalizado (`Nó encerrado`); em ~2 s a nota do card fica `capture_node indisponível (sem /capture/status)` e Gravar/Parar ficam desabilitados; o chip REC some |
+| 14 | capture_node de volta | `ros2 run pantilt_dataset capture_node --ros-args --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml` | em poucos segundos o painel volta (estado `Parado`) sem recarregar a página |
+| 15 | Web reiniciada | launch com `web:=false` e, em outro terminal, `ros2 launch pantilt_web web.launch.py`; durante uma gravação, Ctrl+C na web e suba de novo | a nota mostra `Sem conexão com o rosbridge`; ao reconectar, o painel volta em `Gravando` sem recarregar; a gravação não é afetada |
+
+### 5.4 Sessão de coleta
+
+Roteiro curto para gravar o dataset de verdade:
+
+1. `df -h /ros2_ws`: anote o espaço livre. Use o tamanho por minuto medido no teste 3 da seção 5.1 para saber quantos minutos cabem.
+2. Leve o mecanismo ao centro mecânico e zere (`Zerar eixos` na página).
+3. `ros2 launch pantilt_bringup dataset.launch.py`.
+4. Abra `http://localhost:8080/?tab=coleta`.
+5. Para cada cena (posição do pan-tilt na sala):
+   - sessão com o nome da cena e da luz (ex.: `mesa janela tarde`);
+   - Varredura marcada e Gravar;
+   - deixe completar pelo menos uma passada (`passada 2` na mensagem);
+   - Parar.
+6. Confira em cada gravação: `perd.` (descartados) ausente nos quadros, e `fps_real` do `.json` perto de 15.
+7. Ao fim, Ctrl+C no launch e copie os vídeos de `ros2_ws\datasets` para fora do `C:` se o espaço apertar.
 
 ### Preste atenção
 
-- **Disco:** o `/ros2_ws` fica no `C:` do Windows, com pouco espaço livre. O nó recusa o início e encerra a gravação (com o arquivo finalizado) abaixo de `min_free_gb`, verificando a cada 5 s. Anote no teste 3 quanto ocupa cada minuto, para planejar a coleta.
-- **`dropped` > 0** significa que o disco ou a codificação não acompanham a câmera. Anote se aparecer; um `queue_size` maior só adia o problema.
+- **Disco:** o `/ros2_ws` fica no `C:` do Windows, com pouco espaço livre. O nó recusa o início e encerra a gravação (com o arquivo finalizado) abaixo de `min_free_gb`, verificando a cada 5 s. Anote no teste 3 da seção 5.1 quanto ocupa cada minuto, para planejar a coleta.
+- **`dropped` > 0** (no painel, `N · M perd.` em laranja) significa que o disco ou a codificação não acompanham a câmera. Anote se aparecer; um `queue_size` maior só adia o problema.
 - **Vídeo acelerado:** o MP4 declara `record_fps` (15). Se a câmera entregar menos (pouca luz), o vídeo toca mais rápido que a cena real. O `fps_real` do `.json` mostra a taxa gravada. Para extrair quadros para o dataset, isso não importa.
-- Uma varredura interrompida **não é retomada** sozinha: para voltar a varrer, encerre e inicie de novo com `scan: true`.
-- Se o `/capture/status` parar de chegar, o `capture_node` travou ou saiu. Confira o terminal 2.
+- **"Parar tudo" e STOP não encerram a varredura.** Eles publicam velocidade zero pela web; o `command_mux` dá prioridade ao operador por 1 s e depois a varredura volta. Para parar de varrer, use **Parar** no painel (ou `/capture/stop`).
+- Uma varredura interrompida **não é retomada** sozinha: para voltar a varrer, encerre e inicie de novo com Varredura marcada.
+- Se o `/capture/status` parar de chegar, o `capture_node` travou ou saiu: o painel mostra `capture_node indisponível`. Confira o terminal do launch.
+- Com tudo num launch só, o log mistura os nós. Filtre com `grep`, ex.: `ros2 launch ... 2>&1 | grep -E 'capture_node|scan_node'`.
+- O `camera_node` pode imprimir `Corrupt JPEG data: premature end of data segment` de vez em quando. É aviso do decodificador MJPG da câmera e não interrompe a gravação; anote se vier junto com queda de taxa.
 
 ---
 
@@ -509,8 +585,11 @@ ros2 service call /capture/stop std_srvs/srv/Trigger
 | `offering incompatible QoS ... RELIABILITY_QOS_POLICY` no log do web_video_server | stream aberto sem `qos_profile=sensor_data` | use a URL da página ou inclua o parâmetro. As assinaturas RELIABLE antigas continuam listadas até reiniciar o `web.launch.py` |
 | `Não foi possível abrir a fonte "0"` repetido | câmera não anexada ao WSL (o `/dev/video0` pode existir mesmo assim) | `ls /sys/class/video4linux/`; se estiver vazio, refaça o `usbipd attach` |
 | `ros2 topic hz` em ~7 Hz ou vídeo em ~5 fps | processo sem o perfil do Fast DDS ou `/dev/shm` cheio | `echo $FASTRTPS_DEFAULT_PROFILES_FILE` no terminal do nó; `df -h /dev/shm`; `ros2 daemon stop` |
+| Página não carrega no navegador do Windows (mas `curl localhost:8080` no container responde) | porta não publicada pelo docker-compose (só 8080, 9090 e 8081) | use as portas padrão do `web.launch.py`; o argumento é `http_port`/`video_port` (um `port:=` é ignorado sem aviso) |
+| `localhost:8080` mostra uma lista de tópicos em vez da página | o web_video_server está na 8080 (web subida com `video_port:=8080`) | suba a web com as portas padrão (página 8080, vídeo 8081) |
 | Página em `Servidor de vídeo indisponível` | web_video_server fora do ar ou em outra porta | confira o terminal da web; com outra porta, abra a página com `?video=<porta>` |
 | Tópico não encontrado no stream | tópico com `%2F` na URL | use `/` literal: o web_video_server não decodifica `%2F` |
+| Aba Coleta em `capture_node indisponível` | `capture_node` fora do ar ou travado (sem `/capture/status` há 2 s) | confira o terminal do launch; `ros2 node list`; suba de novo com o `dataset.launch.py` |
 | `ros2 param dump` com valores diferentes do yaml | nó iniciado sem `--ros-args --params-file` (ex.: `--ros_param`, que é ignorado) | suba de novo com o comando da seção 2 |
 
 ---
@@ -519,7 +598,6 @@ ros2 service call /capture/stop std_srvs/srv/Trigger
 
 Seções a acrescentar aqui quando os itens existirem:
 
-- `pantilt_dataset`: painel de coleta na página e `dataset.launch.py` (Etapa 3; entra na seção 5);
 - `pantilt_perception`: `detector_node` (a página passa a abrir sem `?video_topic=`, mostrando `/perception/debug_image`);
 - `pantilt_control`: `visual_servo_node` (PID e fuzzy);
 - `pantilt_manager`: `inspection_manager` e inspeção pela página.

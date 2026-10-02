@@ -11,9 +11,14 @@ launch files no pantilt_bringup ou são iniciados com ros2 run.
 
 Uso:
   ros2 launch pantilt_web web.launch.py
-  ros2 launch pantilt_web web.launch.py http_port:=8000 rosbridge_port:=9090 video_port:=8080
+  ros2 launch pantilt_web web.launch.py http_port:=8080 rosbridge_port:=9090 video_port:=8081
 
-Se mudar rosbridge_port ou video_port, abra a página com ?ws=<porta>&video=<porta>.
+Página: http://localhost:8080/
+
+As portas padrão são as publicadas pelo docker-compose do pantilt_dockerfile
+(8080, 9090 e 8081). Uma porta fora dessa lista não chega ao navegador do
+Windows. Se mudar rosbridge_port ou video_port, abra a página com
+?ws=<porta>&video=<porta>.
 """
 
 import os
@@ -34,11 +39,11 @@ def generate_launch_description():
     video_port = LaunchConfiguration('video_port')
 
     return LaunchDescription([
-        DeclareLaunchArgument('http_port', default_value='8000',
+        DeclareLaunchArgument('http_port', default_value='8080',
                               description='Porta HTTP da página'),
         DeclareLaunchArgument('rosbridge_port', default_value='9090',
                               description='Porta WebSocket do rosbridge'),
-        DeclareLaunchArgument('video_port', default_value='8080',
+        DeclareLaunchArgument('video_port', default_value='8081',
                               description='Porta HTTP do web_video_server'),
 
         ExecuteProcess(

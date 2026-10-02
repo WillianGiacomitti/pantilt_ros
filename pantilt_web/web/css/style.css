@@ -266,10 +266,48 @@ body.autonomous .topbar { border-bottom-color: var(--accent); }
   background: rgba(20, 22, 26, .8);
   border: 1px solid var(--line);
 }
+.rec-chip {
+  left: auto;
+  bottom: auto;
+  top: 10px;
+  right: 10px;
+  font-family: var(--mono);
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.rec-dot { animation: pulse 1.4s ease-in-out infinite; }
+
+/* ---------------- Abas (Inspeção | Coleta) ---------------- */
+.insp-card .card-title { align-items: center; }
+.tabs {
+  display: flex;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.tab[aria-selected="true"] { background: var(--accent-dim); color: var(--accent); }
+.tab-rec { color: var(--bad); animation: pulse 1.4s ease-in-out infinite; }
+.tab-panel { display: flex; flex-direction: column; min-height: 0; }
 
 /* ---------------- Inspeção ---------------- */
 .insp-card { display: flex; flex-direction: column; }
-.insp-card.unavailable .card-note { color: var(--accent); }
+.insp-card.unavailable #insp-note, .card-note.warn { color: var(--accent); }
 .insp-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -334,6 +372,59 @@ body.autonomous .topbar { border-bottom-color: var(--accent); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.insp-message.bad { color: var(--bad); }
+
+/* ---------------- Coleta de dataset ---------------- */
+.cap-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  gap: 8px;
+}
+.cap-form input[type="text"] {
+  min-width: 0;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+}
+.cap-form input[type="text"]:disabled, .cap-speed input:disabled { opacity: .4; }
+.cap-form input:focus { outline: none; border-color: var(--accent); }
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.toggle input { margin: 0; accent-color: var(--accent); }
+.toggle:has(input:checked) { color: var(--accent); }
+.toggle:has(input:disabled) { opacity: .4; cursor: not-allowed; }
+.cap-speed { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-dim); }
+.cap-speed input {
+  width: 52px;
+  padding: 8px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.cap-status { grid-template-columns: minmax(0, 1.3fr) minmax(0, .7fr) minmax(0, 1fr) minmax(0, 1.6fr); }
+#cap-state[data-state="recording"] { color: var(--bad); }
+#cap-state[data-state="scanning"] { color: var(--accent); }
+#cap-frames.warn { color: var(--accent); }
 
 /* ---------------- Diagnóstico ---------------- */
 .diag-card { display: flex; flex-direction: column; }
@@ -496,6 +587,8 @@ input[type=range] { width: 100%; margin: 4px 0 0; accent-color: var(--accent); }
   .btn { padding: 8px 10px; }
   .field input { padding: 6px 8px; font-size: 14px; }
   .insp-status { margin-top: 6px; }
+  .tab { padding: 3px 8px; }
+  .cap-form input[type="text"], .cap-speed input { padding: 6px 8px; }
   .btn-stop-all { padding: 10px; }
 }
 
@@ -507,6 +600,9 @@ input[type=range] { width: 100%; margin: 4px 0 0; accent-color: var(--accent); }
   .left { grid-template-rows: auto auto; }
   .video-card { aspect-ratio: 4 / 3; }
   .bottom-row { grid-template-columns: 1fr; }
+  .cap-form { grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr); }
+  .cap-form input[type="text"] { grid-column: 1 / -1; }
+  .cap-status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .diag-card { height: 200px; }
   :root { --jog: 60px; }
 }
