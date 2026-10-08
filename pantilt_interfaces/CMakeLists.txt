@@ -8,9 +8,11 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/VisualTarget.msg"
   "msg/InspectionStatus.msg"
+  "msg/CaptureStatus.msg"
   "srv/SetTarget.srv"
   "srv/StartInspection.srv"
   "srv/ListEquipment.srv"
+  "srv/StartCapture.srv"
   "action/Scan.action"
   "action/Center.action"
   DEPENDENCIES std_msgs

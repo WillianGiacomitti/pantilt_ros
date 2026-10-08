@@ -1,6 +1,7 @@
 // Vídeo com as bboxes: stream MJPEG do web_video_server
 // (/perception/debug_image, publicado pelo detector_node) e contagem de
-// /perception/detections.
+// /perception/detections. Na aba Coleta, o stream passa a /camera/image_raw
+// (setTopic).
 //
 // Enquanto nenhum quadro chegar, o painel mostra um aviso no lugar do vídeo.
 // Se o web_video_server não responder, o stream é pedido de novo a cada
@@ -16,11 +17,12 @@ let img;
 let placeholder;
 let retryTimer = null;
 let lastDetectionsAt = 0;
+let currentTopic = CONFIG.video.topicOverride || CONFIG.video.topic;
 
 export function init() {
   img = document.getElementById('video');
   placeholder = document.getElementById('video-placeholder');
-  document.getElementById('video-topic').textContent = CONFIG.video.topic;
+  document.getElementById('video-topic').textContent = currentTopic;
 
   img.addEventListener('load', () => setHasVideo(true));
   img.addEventListener('error', () => {
@@ -48,11 +50,25 @@ export function init() {
   loadStream();
 }
 
+/**
+ * Troca o tópico do stream (ex.: /camera/image_raw na aba Coleta). Um tópico
+ * passado em ?video_topic= sempre vence.
+ */
+export function setTopic(t) {
+  const next = CONFIG.video.topicOverride || t;
+  if (next === currentTopic) return;
+  currentTopic = next;
+  document.getElementById('video-topic').textContent = currentTopic;
+  if (img) loadStream();     // antes do init(), o stream é aberto pelo próprio init()
+}
+
 function loadStream() {
   clearTimeout(retryTimer);
-  const { topic: t, type } = CONFIG.video;
+  const { type, qos } = CONFIG.video;
   setHasVideo(false, 'Aguardando imagens');
-  img.src = `${CONFIG.videoBaseUrl}/stream?topic=${encodeURIComponent(t)}&type=${type}&_=${Date.now()}`;
+  // encodeURI preserva a "/": o web_video_server não decodifica "%2F" no tópico
+  img.src = `${CONFIG.videoBaseUrl}/stream?topic=${encodeURI(currentTopic)}&type=${type}` +
+            `&qos_profile=${qos}&_=${Date.now()}`;
 }
 
 function setHasVideo(hasVideo, reason = '') {

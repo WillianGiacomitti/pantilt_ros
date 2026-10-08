@@ -18,6 +18,15 @@ MSG_SET_ZERO_ACK = 0x05
 MSG_HEARTBEAT = 0x06
 MSG_ERROR = 0x07
 MSG_BOOT_INFO = 0x08
+# Auto home pelo batente negativo. Definidos no firmware, mas o host ainda não
+# pede home: o bridge ignora um MSG_HOME_ACK recebido.
+MSG_HOME_REQ = 0x09     # payload: uint8 eixo
+MSG_HOME_ACK = 0x0A     # payload: uint8 eixo, uint8 sucesso (enviado ao fim do home, até ~1 min)
+
+# Eixo do MSG_HOME_REQ / MSG_HOME_ACK; "ambos" faz o pan e depois o tilt
+HOME_EIXO_PAN = 0
+HOME_EIXO_TILT = 1
+HOME_EIXO_AMBOS = 2
 
 # Espelho de FAILSAFE_TIMEOUT_MS do firmware: motores param após esse tempo sem frames
 FAILSAFE_TIMEOUT_S = 0.5
@@ -33,6 +42,17 @@ ERROR_CODES = {
     5: 'Comando /ptu/cmd_pos recebido com payload inválido',
     6: 'Comando /ptu/cmd_vel recebido com payload inválido',
     7: 'Heap livre baixo na ESP32 (possível vazamento de memória)',
+    8: 'Encoder PAN: ímã ausente, fraco ou forte demais',
+    9: 'Encoder TILT: ímã ausente, fraco ou forte demais',
+    10: 'Passos perdidos no PAN: encoder e contagem de passos divergem',
+    11: 'Passos perdidos no TILT: encoder e contagem de passos divergem (persiste até o próximo set_zero)',
+    12: 'Driver TMC2209 do PAN sem resposta pela UART ou resetado (configuração reaplicada)',
+    13: 'Driver TMC2209 do TILT sem resposta pela UART ou resetado (configuração reaplicada)',
+    14: 'Driver TMC2209 do PAN com temperatura alta (pré-aviso ou desligamento)',
+    15: 'Driver TMC2209 do TILT com temperatura alta (pré-aviso ou desligamento)',
+    16: 'Comando do PAN recortado ou parado pelo limite de software do firmware',
+    17: 'Comando do TILT recortado ou parado pelo limite de software do firmware',
+    18: 'Auto home falhou (batente não encontrado, abortado ou ajuste incoerente)',
 }
 
 # Precisa ficar em sincronia com enum esp_reset_reason_t do ESP-IDF

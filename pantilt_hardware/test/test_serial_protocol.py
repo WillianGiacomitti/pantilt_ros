@@ -3,7 +3,8 @@
 import struct
 
 from pantilt_hardware.serial_protocol import (
-    MSG_CMD_VEL, MSG_HEARTBEAT, MSG_TELEMETRY, SYNC1, SYNC2, FrameParser, build_frame, crc8,
+    ERROR_CODES, MSG_CMD_VEL, MSG_HEARTBEAT, MSG_TELEMETRY, SYNC1, SYNC2, FrameParser,
+    build_frame, crc8,
 )
 
 
@@ -48,3 +49,8 @@ def test_crc_errado_descarta_e_resincroniza():
     ruim[-1] ^= 0xFF
     frames = parse_all(bytes(ruim) + bom)
     assert frames == [(MSG_CMD_VEL, struct.pack('<ff', 1.0, 2.0))]
+
+
+def test_codigos_de_erro_espelham_o_firmware():
+    # ERR_I2C_TIMEOUT_PAN (1) a ERR_HOME_FALHOU (18) em SerialProtocol.h
+    assert sorted(ERROR_CODES) == list(range(1, 19))

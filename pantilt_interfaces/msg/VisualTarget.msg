@@ -1,5 +1,7 @@
-# Alvo selecionado pelo detector_node (maior score = confianca x area).
-# Publicado em /perception/target a cada frame processado.
+# Alvo selecionado pelo detector_node (maior score = confianca x area normalizada).
+# Publicado em /perception/target a cada frame processado, somente com filtro
+# ativo (/perception/set_target). Sem filtro, o topico nao e publicado.
+# O header e o da imagem de origem (instante da captura).
 # Convencao de erro: centro da bbox menos centro da imagem, em pixels.
 #   error_x > 0 -> alvo a direita do centro
 #   error_y > 0 -> alvo abaixo do centro
@@ -7,7 +9,7 @@
 std_msgs/Header header
 
 bool detected            # false quando nenhum candidato valido no frame
-string equipment         # chave do equipment.yaml (vazio se sem filtro)
+string equipment         # chave do equipment.yaml do filtro ativo
 float32 confidence
 
 float32 center_x         # px

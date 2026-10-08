@@ -42,32 +42,66 @@
         <span id="auto-banner-detail"></span>
       </div>
       <div class="chip" id="det-chip" hidden><span id="det-count"></span></div>
+      <div class="chip rec-chip" id="rec-chip" title="Gravação do capture_node em andamento" hidden>
+        <span class="rec-dot">●</span> REC <span id="rec-time"></span>
+      </div>
     </div>
 
     <div class="bottom-row">
 
       <div class="card insp-card" id="insp-panel">
         <div class="card-title">
-          <span>Inspeção</span>
-          <span class="card-note" id="insp-note"></span>
-        </div>
-        <form id="insp-form" class="insp-form">
-          <select id="insp-equipment" data-requires="manager" aria-label="Equipamento"></select>
-          <div class="segmented no-select" role="radiogroup" aria-label="Modo">
-            <input type="radio" name="insp-mode" id="insp-mode-center" data-requires="manager" checked>
-            <label for="insp-mode-center" title="Centraliza e volta ao ocioso">Centralizar</label>
-            <input type="radio" name="insp-mode" id="insp-mode-track" data-requires="manager">
-            <label for="insp-mode-track" title="Centraliza e mantém o rastreamento até parar">Rastrear</label>
+          <div class="tabs" role="tablist" aria-label="Painel">
+            <button type="button" class="tab" role="tab" data-tab="inspecao">Inspeção</button>
+            <button type="button" class="tab" role="tab" data-tab="coleta">Coleta<span class="tab-rec" id="tab-rec" title="Gravando" hidden>●</span></button>
           </div>
-          <button type="submit" class="btn" id="btn-insp-start">Iniciar</button>
-          <button type="button" class="btn btn-ghost" id="btn-insp-stop" data-requires="manager">Parar</button>
-        </form>
-        <dl class="insp-status">
-          <div><dt>Estado</dt><dd id="insp-state">—</dd></div>
-          <div><dt>Equipamento</dt><dd id="insp-current">—</dd></div>
-          <div><dt>Erro</dt><dd id="insp-error">—</dd></div>
-        </dl>
-        <div class="insp-message" id="insp-message"></div>
+          <span class="card-note" id="insp-note" data-tab-panel="inspecao"></span>
+          <span class="card-note" id="cap-note" data-tab-panel="coleta"></span>
+        </div>
+
+        <!-- Aba Inspeção: inspection_manager -->
+        <div class="tab-panel" data-tab-panel="inspecao">
+          <form id="insp-form" class="insp-form">
+            <select id="insp-equipment" data-requires="manager" aria-label="Equipamento"></select>
+            <div class="segmented no-select" role="radiogroup" aria-label="Modo">
+              <input type="radio" name="insp-mode" id="insp-mode-center" data-requires="manager" checked>
+              <label for="insp-mode-center" title="Centraliza e volta ao ocioso">Centralizar</label>
+              <input type="radio" name="insp-mode" id="insp-mode-track" data-requires="manager">
+              <label for="insp-mode-track" title="Centraliza e mantém o rastreamento até parar">Rastrear</label>
+            </div>
+            <button type="submit" class="btn" id="btn-insp-start">Iniciar</button>
+            <button type="button" class="btn btn-ghost" id="btn-insp-stop" data-requires="manager">Parar</button>
+          </form>
+          <dl class="insp-status">
+            <div><dt>Estado</dt><dd id="insp-state">—</dd></div>
+            <div><dt>Equipamento</dt><dd id="insp-current">—</dd></div>
+            <div><dt>Erro</dt><dd id="insp-error">—</dd></div>
+          </dl>
+          <div class="insp-message" id="insp-message"></div>
+        </div>
+
+        <!-- Aba Coleta: capture_node (vídeos para o dataset) -->
+        <div class="tab-panel" data-tab-panel="coleta" hidden>
+          <form id="cap-form" class="cap-form">
+            <input type="text" id="cap-session" placeholder="Sessão (ex.: mesa janela tarde)" maxlength="60"
+                   autocomplete="off" required aria-label="Nome da sessão">
+            <label class="toggle" title="Mantém o pan-tilt varrendo durante a gravação (scan_node)">
+              <input type="checkbox" id="cap-scan" checked><span>Varredura</span>
+            </label>
+            <label class="cap-speed" title="Velocidade da varredura; 0 = padrão do scan_node">
+              <input type="number" id="cap-speed" value="0" min="0" step="1" aria-label="Velocidade da varredura"><span>°/s</span>
+            </label>
+            <button type="submit" class="btn" id="btn-cap-start">Gravar</button>
+            <button type="button" class="btn btn-ghost" id="btn-cap-stop">Parar</button>
+          </form>
+          <dl class="insp-status cap-status">
+            <div><dt>Estado</dt><dd id="cap-state">—</dd></div>
+            <div><dt>Tempo</dt><dd id="cap-time">—</dd></div>
+            <div><dt>Quadros</dt><dd id="cap-frames">—</dd></div>
+            <div><dt>Arquivo</dt><dd id="cap-file">—</dd></div>
+          </dl>
+          <div class="insp-message" id="cap-message"></div>
+        </div>
       </div>
 
       <div class="card diag-card">

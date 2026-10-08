@@ -1,0 +1,18 @@
+# Equipamentos de teste com o yolo11n.pt pré-treinado no COCO, para validar o
+# fluxo completo antes de o modelo do TCC existir (docs/architecture.md, seção 7).
+#
+# class_name usa os nomes do COCO (model.names), em inglês.
+
+equipment:
+  garrafa:
+    label: "Garrafa (teste COCO)"
+    class_name: "bottle"
+  copo:
+    label: "Copo (teste COCO)"
+    class_name: "cup"
+  celular:
+    label: "Celular (teste COCO)"
+    class_name: "cell phone"
+  tv:
+    lavel: "TV (teste COCO)"
+    class_name: "tv"
