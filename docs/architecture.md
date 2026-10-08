@@ -6,7 +6,8 @@ Este documento é a **fonte da verdade** para nomes de nós, tópicos, services,
 
 - **Autor:** Willian Luiz Giacomitti
 - **Orientador:** Prof. Dr. Ronnier Frates Rohrich
-- **Versão do documento:** 0.4 (08/10/2026): camada de controle e calibração (`CameraInfo` no `camera_node`, especificação completa do `visual_servo_node`, `/ptu/cmd_pos_auto` no `command_mux`, novo `calibration_node`, métricas precisadas)
+- **Versão do documento:** 0.5 (08/10/2026): comportamento do `inspection_manager` detalhado (recusas do início, confirmação do alvo, uma passada de varredura, readquisição por perdas consecutivas, status)
+  - 0.4 (08/10/2026): camada de controle e calibração (`CameraInfo` no `camera_node`, especificação completa do `visual_servo_node`, `/ptu/cmd_pos_auto` no `command_mux`, novo `calibration_node`, métricas precisadas)
   - 0.3 (02/10/2026): comportamento do `detector_node` detalhado (alvo só com filtro, quadros descartados, pesos locais) e `ListEquipment` lido só do yaml
 - **Plataforma:** ROS 2 Humble · Python (rclpy) · Docker em Windows/WSL2
 
@@ -150,12 +151,21 @@ Orquestra a inspeção pela máquina de estados da seção 6. Carrega o `equipme
 
 O `/inspection/list_equipment` lista o `equipment.yaml` sem cruzar com as classes do modelo: só o `detector_node` carrega o modelo. Um equipamento ausente do modelo é recusado pelo `/perception/set_target`, e o gerenciador repassa a recusa à interface.
 
+- **Início (`/inspection/start`):** só a partir do IDLE. É recusado (`accepted=false`, motivo em `message`) se o estado não for IDLE, se a chave não estiver no `equipment.yaml`, se `mode` não for `MODE_CENTER` nem `MODE_TRACK`, se `/ptu/control_source` for `web` (o operador acabou de comandar) ou se `/control/scan`, `/control/center` ou `/perception/set_target` estiverem indisponíveis. Em seguida o gerenciador chama `/perception/set_target` e **espera a resposta** (até 2 s): uma recusa do detector volta à interface com a mensagem dele. Por isso o service espera numa thread do `MultiThreadedExecutor`, com o cliente do `set_target` num grupo de callbacks próprio.
+- **Confirmação do alvo:** `confirm_frames` mensagens **consecutivas** de `/perception/target` com `detected=true`, `equipment` igual à chave da inspeção e `header.stamp` posterior à resposta do `set_target`. Um `detected=false` zera a contagem.
+- **Varredura:** **uma passada** por entrada em SEARCHING, com o goal `Scan` (`speed_deg_s=0`, `timeout_s=scan_timeout_s`). Se a passada terminar (completa ou por tempo) sem confirmar o alvo, a inspeção volta ao IDLE com "alvo não encontrado".
+- **Readquisição:** só a `Center` abortada com a mensagem `alvo perdido` (a do `visual_servo_node`, seção 4.5) leva de volta ao SEARCHING. `max_reacquire` conta perdas **consecutivas**: a contagem zera sempre que o feedback trouxer `centered=true`. Qualquer outro término sem sucesso da `Center` (preso no limite, goal recusado, servidor fora do ar) volta ao IDLE com o motivo.
+- **TRACKING:** entra no primeiro feedback com `centered=true` no modo TRACK e não volta ao CENTERING se o erro sair da tolerância; o `error_px` do status segue o feedback.
+- **Status:** `/inspection/status` é publicado a cada mudança e a 5 Hz. O `error_px` vem do feedback da `Center`, o mesmo erro que a malha vê.
+- **Servidores fora do ar:** durante a inspeção, o gerenciador confere periodicamente se os servidores das actions continuam no ar; se um sair sem entregar o resultado, a inspeção volta ao IDLE com o motivo.
+- **Encerramento (Ctrl+C):** cancela os goals ativos, remove o filtro do detector e publica o IDLE antes de sair.
+
 | Parâmetro | Padrão | Descrição |
 |---|---|---|
-| `equipment_file` | `config/equipment.yaml` | Mesma configuração do detector |
+| `equipment_file` | `config/equipment_coco_test.yaml` (caminho absoluto no `params.yaml`) | O mesmo arquivo do `detector_node`; `config/equipment.yaml` depois do treino |
 | `confirm_frames` | 3 | Frames consecutivos com alvo para confirmar detecção |
 | `scan_timeout_s` | 60.0 | Tempo máximo de varredura |
-| `max_reacquire` | 2 | Tentativas de nova varredura após perda do alvo |
+| `max_reacquire` | 2 | Perdas consecutivas do alvo que ainda levam a nova varredura |
 | `tolerance_px` | 20.0 | Repassado ao goal de `Center` |
 | `hold_time_s` | 1.0 | Repassado ao goal de `Center` |
 | `lost_timeout_s` | 1.0 | Repassado ao goal de `Center` |
@@ -468,19 +478,21 @@ stateDiagram-v2
   CENTERING --> IDLE: centralizado (modo CENTER)
   CENTERING --> SEARCHING: alvo perdido
   TRACKING --> SEARCHING: alvo perdido
-  SEARCHING --> IDLE: timeout / stop / operador
-  CENTERING --> IDLE: stop / operador
-  TRACKING --> IDLE: stop / operador
+  SEARCHING --> IDLE: passada sem alvo / stop / operador
+  CENTERING --> IDLE: stop / operador / outro aborto
+  TRACKING --> IDLE: stop / operador / outro aborto
 ```
 
 | Transição | Ações executadas |
 |---|---|
-| IDLE → SEARCHING | chama `/perception/set_target(equip)`; publica `autonomous=true`; envia goal `Scan` |
-| SEARCHING → CENTERING | cancela `Scan`; envia goal `Center` com `mode`, `tolerance_px`, `hold_time_s` e `lost_timeout_s` |
+| IDLE → SEARCHING | chama `/perception/set_target(equip)` e espera a resposta; publica `autonomous=true`; envia goal `Scan` |
+| SEARCHING → CENTERING | alvo confirmado; cancela `Scan`; envia goal `Center` com `mode`, `tolerance_px`, `hold_time_s` e `lost_timeout_s` |
+| SEARCHING → IDLE | `Scan` terminou (padrão completo ou `scan_timeout_s`) sem confirmar o alvo, ou foi recusado/abortado |
 | CENTERING → TRACKING | feedback `centered=true` no modo TRACK (a action continua ativa) |
-| CENTERING → IDLE | resultado `success` no modo CENTER |
-| CENTERING/TRACKING → SEARCHING | `Center` abortada por perda de alvo; incrementa a contagem de tentativas; volta ao IDLE ao passar de `max_reacquire` |
-| qualquer → IDLE | cancela goals ativos; chama `set_target("")`; publica `autonomous=false` e o motivo em `message` |
+| CENTERING → IDLE | resultado `success` no modo CENTER, com `t_c` e `e_r` na mensagem |
+| CENTERING/TRACKING → SEARCHING | `Center` abortada com `alvo perdido`; incrementa a contagem de perdas consecutivas (zerada a cada `centered=true`); volta ao IDLE ao passar de `max_reacquire` |
+| CENTERING/TRACKING → IDLE | `Center` recusada ou terminada sem sucesso por outro motivo (ex.: preso no limite) |
+| qualquer → IDLE | cancela goals ativos; chama `set_target("")` sem esperar a resposta; publica `autonomous=false` e o motivo em `message` |
 
 **Intervenção do operador:** se `/ptu/control_source` mudar para `web` fora do IDLE, o gerenciador aborta a missão e informa na interface ("Inspeção abortada pelo operador").
 

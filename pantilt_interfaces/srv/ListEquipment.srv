@@ -1,4 +1,6 @@
-# Lista os equipamentos disponiveis (equipment.yaml cruzado com as classes do modelo).
+# Lista os equipamentos do equipment.yaml, sem cruzar com as classes do modelo
+# (so o detector_node carrega o modelo; um equipamento ausente dele e recusado
+# pelo /perception/set_target).
 ---
 string[] keys
 string[] labels

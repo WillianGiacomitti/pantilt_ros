@@ -14,5 +14,5 @@ equipment:
     label: "Celular (teste COCO)"
     class_name: "cell phone"
   tv:
-    lavel: "TV (teste COCO)"
+    label: "TV (teste COCO)"
     class_name: "tv"

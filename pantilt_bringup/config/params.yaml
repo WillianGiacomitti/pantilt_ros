@@ -84,6 +84,18 @@ visual_servo_node:
     cmd_hold_s: 0.25               # repete o último comando por até este tempo sem alvo novo
     limit_timeout_s: 2.0           # eixo parado com comando empurrando por mais que isso -> aborta
 
+inspection_manager:
+  ros__parameters:
+    # equipamentos: deve ser o mesmo equipment_file do detector_node
+    equipment_file: "/ros2_ws/src/pantilt_ros/pantilt_bringup/config/equipment_coco_test.yaml"
+    confirm_frames: 3              # alvos consecutivos (detected=true) para confirmar a detecção
+    scan_timeout_s: 60.0           # tempo máximo da passada de varredura (uma por SEARCHING)
+    max_reacquire: 2               # perdas consecutivas do alvo que ainda levam a nova varredura
+    # repassados ao goal Center do visual_servo_node
+    tolerance_px: 20.0             # erro máximo para considerar centralizado
+    hold_time_s: 1.0               # tempo contínuo dentro da tolerância
+    lost_timeout_s: 1.0            # tempo sem alvo até a Center abortar com "alvo perdido"
+
 capture_node:
   ros__parameters:
     output_dir: "/ros2_ws/datasets"  # pasta dos vídeos (fora do src/ e do git; visível no Windows)

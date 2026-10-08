@@ -23,8 +23,10 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
   - [5.2 dataset.launch.py](#52-datasetlaunchpy)
   - [5.3 Painel de coleta](#53-painel-de-coleta)
   - [5.4 Sessão de coleta](#54-sessão-de-coleta)
-- [6. Solução de problemas](#6-solução-de-problemas)
-- [7. Roteiros futuros](#7-roteiros-futuros)
+- [6. pantilt_manager](#6-pantilt_manager)
+  - [6.1 inspection_manager](#61-inspection_manager)
+- [7. Solução de problemas](#7-solução-de-problemas)
+- [8. Roteiros futuros](#8-roteiros-futuros)
 
 | Pacote | O que valida | ESP32 | Câmera |
 |---|---|---|---|
@@ -33,8 +35,9 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 | `pantilt_web` | vídeo na página, reconexão, jog com o hardware | só no jog | sim |
 | `pantilt_control` | `scan_node`: varredura, cancelamento, prioridade do operador, abortos; `visual_servo_node`: sentido de giro, CENTER, TRACK, alvo perdido, limite, métricas | sim (o goal recusado sem calibração dispensa) | só no `visual_servo_node` |
 | `pantilt_dataset` | `capture_node`: MP4 + `.json`, recusas, varredura durante a gravação, disco; `dataset.launch.py` e painel de coleta da página | só com varredura | sim |
+| `pantilt_manager` | `inspection_manager`: recusas do início, varredura, confirmação, centralização, readquisição, operador, stop e encerramento | sim | sim |
 
-Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5); a 4.2 exige também a 2.2 e a calibração da 2.3. As seções 5.1 a 5.3 foram aprovadas no hardware (29/09 e 02/10/2026). Para validar o `detector_node`, siga 2.2 e depois a seção 3 sem `?video_topic=`.
+Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5); a 4.2 exige também a 2.2 e a calibração da 2.3. As seções 5.1 a 5.3 foram aprovadas no hardware (29/09 e 02/10/2026). Para validar o `detector_node`, siga 2.2 e depois a seção 3 sem `?video_topic=`. A seção 6 exige a 2.2, a 2.3 e os sinais da 4.2.
 
 ---
 
@@ -70,7 +73,7 @@ ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/ 2>/dev/null   # ESP32
 ls /sys/class/video4linux/                # video0 e video1: câmera anexada de fato
 
 # nenhum nó antigo rodando (ex.: iniciado pelo entrypoint)
-ps aux | grep -v grep | grep -E 'serial_bridge|command_mux|camera_node|detector_node|scan_node|capture_node|web_video_server'
+ps aux | grep -v grep | grep -E 'serial_bridge|command_mux|camera_node|detector_node|scan_node|visual_servo|capture_node|inspection_manager|web_video_server'
 
 # build
 colcon build --symlink-install && ws
@@ -296,7 +299,7 @@ Se aparecer `A fonte entrega WxH em vez de 640x480`, a câmera não aceitou a re
 
 ```bash
 ros2 param dump /camera_node                # confere que o params.yaml foi lido
-ros2 topic hz /camera/image_raw             # ~19-30 Hz conforme a luz; ~7 Hz indica problema de transporte (seção 6)
+ros2 topic hz /camera/image_raw             # ~19-30 Hz conforme a luz; ~7 Hz indica problema de transporte (seção 7)
 ros2 topic info -v /camera/image_raw        # publisher camera_node: Reliability BEST_EFFORT
 ros2 topic echo /camera/image_raw --field header   # stamp avançando e frame_id camera_optical_frame
 ros2 topic hz /camera/camera_info           # mesma taxa da imagem
@@ -574,7 +577,7 @@ Abra a página: `http://localhost:8080/?video_topic=/camera/image_raw`.
 
 ### Preste atenção
 
-- Se a assinatura do `web_video_server` aparecer como **RELIABLE**, o stream foi aberto sem `qos_profile=sensor_data` e não recebe quadros (seção 6).
+- Se a assinatura do `web_video_server` aparecer como **RELIABLE**, o stream foi aberto sem `qos_profile=sensor_data` e não recebe quadros (seção 7).
 - Anote o sentido da imagem em cada eixo nos testes 5 e 7. É isso que define o sinal do erro do `visual_servo_node` (`invert_pan`/`invert_tilt`).
 - Com o sistema todo rodando, `df -h /dev/shm` deve mostrar algumas dezenas de MB usados, longe de 1 GB.
 
@@ -863,7 +866,79 @@ Roteiro curto para gravar o dataset de verdade:
 
 ---
 
-## 6. Solução de problemas
+## 6. pantilt_manager
+
+### 6.1 inspection_manager
+
+**O que valida:** o `inspection_manager` (architecture.md §4.3 e §6), que orquestra a inspeção: aplica o filtro no detector, varre com o `scan_node`, confirma o alvo em `confirm_frames` quadros consecutivos, centraliza com o `visual_servo_node` e volta ao IDLE. Aqui o teste é pela linha de comando; a aba Inspeção da página é o roteiro seguinte.
+
+**Pré-requisitos:**
+- seção 1.2 aprovada nos dois eixos e mecanismo zerado no centro mecânico;
+- seções 2.2 e 2.3: detector com o `equipment_coco_test.yaml` e `camera_intrinsics.yaml` presente;
+- sinais do servo conferidos (seção 4.2, testes 2 e 3). Os ganhos ainda não foram sintonizados (tarefa E);
+- uma garrafa no alcance da varredura (pan de −28° a 28°, faixas de tilt −20°, 0° e 20°), fora do centro da imagem;
+- STOP da página à mão. **O STOP e qualquer jog abortam a inspeção** (a fonte vira `web`).
+
+**Terminais** (cada um com a seção 0 aplicada):
+
+```bash
+ros2 launch pantilt_bringup hardware.launch.py           # 1
+ros2 launch pantilt_bringup perception.launch.py         # 2
+ros2 launch pantilt_bringup control.launch.py            # 3 (scan_node + visual_servo_node)
+ros2 launch pantilt_web web.launch.py                    # 4 (vídeo, jog e STOP)
+ros2 run pantilt_manager inspection_manager --ros-args \
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml   # 5
+```
+
+Esperado no log do terminal 5: `Equipamentos de .../equipment_coco_test.yaml: garrafa, copo, celular, tv | confirmação em 3 quadros | varredura até 60 s | até 2 readquisições | Center: 20.0 px por 1.0 s, perda em 1.0 s`. As transições aparecem no mesmo log (ex.: `SEARCHING -> CENTERING: Centralizando`).
+
+**Terminal 6: observação**
+
+```bash
+ros2 topic echo /inspection/status
+```
+
+**Terminal 7: comandos**
+
+```bash
+ros2 service call /inspection/list_equipment pantilt_interfaces/srv/ListEquipment
+# mode 0 = CENTER, 1 = TRACK
+ros2 service call /inspection/start pantilt_interfaces/srv/StartInspection "{equipment: 'garrafa', mode: 0}"
+ros2 service call /inspection/start pantilt_interfaces/srv/StartInspection "{equipment: 'garrafa', mode: 1}"
+ros2 service call /inspection/stop std_srvs/srv/Trigger
+```
+
+| # | Teste | Comando / ação | Esperado |
+|---|---|---|---|
+| 1 | Lista | `list_equipment` | `keys` e `labels` do `equipment_coco_test.yaml`, na ordem do arquivo |
+| 2 | Servidores fora do ar | terminal 3 parado; start CENTER | `accepted: false`, `Indisponível: scan_node (/control/scan): suba o control.launch.py; visual_servo_node ...`. Não precisa da ESP32 |
+| 3 | Detector fora do ar | terminal 2 parado; start CENTER | `accepted: false`, `Indisponível: detector_node (/perception/set_target): suba o perception.launch.py` |
+| 4 | Chave desconhecida | `{equipment: 'pneu', mode: 0}` | `accepted: false`, `Equipamento "pneu" desconhecido. Disponíveis: ...` |
+| 5 | Operador recente | segure um jog e, em menos de 1 s depois de soltar, start CENTER | `accepted: false`, `Operador no controle ...`; 1 s depois, o mesmo start é aceito |
+| 6 | CENTER | start CENTER | `Inspeção iniciada: Garrafa (teste COCO) (CENTER)`; status SEARCHING (`autonomous: true`) → CENTERING ao achar a garrafa → IDLE com `Centralizado em X s, erro residual Y px`. Log do detector: `Filtro: ...` no início e `Filtro removido` no fim |
+| 7 | Passada sem alvo | tire a garrafa de cena; start CENTER | a varredura completa (~20 s com os padrões) e o status volta ao IDLE com `Alvo não encontrado (varredura completa)` |
+| 8 | TRACK + stop | start TRACK; espere TRACKING; `stop` | `success: true`, IDLE com `Inspeção interrompida (/inspection/stop)`; log do servo `Centralização cancelada`; eixos param |
+| 9 | Perda e readquisição | start TRACK; em TRACKING, cubra a garrafa por ~2 s e descubra | ~1 s depois de cobrir: SEARCHING com `Alvo perdido: nova varredura (readquisição 1/2)`; ao descobrir: CENTERING `Centralizando (readquisição 1/2)` → TRACKING |
+| 10 | Sem readquisição | terminal 5 com `-p max_reacquire:=0`; start TRACK; cubra a garrafa | IDLE com `Alvo perdido 1 vezes seguidas (máximo de readquisições: 0)` |
+| 11 | Operador assume | durante a inspeção, um jog (ou o STOP) | na hora: IDLE com `Inspeção abortada pelo operador`; o eixo obedece ao jog; goals cancelados e filtro removido |
+| 12 | Start em andamento | start de novo durante a inspeção | `accepted: false`, `Inspeção em andamento (...)` |
+| 13 | Ctrl+C no gerenciador | em TRACKING, Ctrl+C no terminal 5 | status IDLE com `Nó encerrado`; log do servo `Centralização cancelada`; `Filtro removido` no detector; eixos param |
+| 14 | `scan_node` cai | durante a SEARCHING, Ctrl+C no terminal 3 | IDLE em até ~0,2 s, com `scan_node (/control/scan) saiu do ar` ou `Varredura interrompida: ...` |
+| 15 | Stop em IDLE | `stop` sem inspeção | `success: false`, `Nenhuma inspeção ativa` |
+| 16 | Parâmetro inválido | `ros2 run pantilt_manager inspection_manager --ros-args -p confirm_frames:=0` | `[FATAL] Parâmetro inválido: confirm_frames=0 inválido: deve ser pelo menos 1` e o nó sai |
+
+### Preste atenção
+
+- **Confirmação:** só contam alvos com `header.stamp` posterior à resposta do `set_target` e com a chave da inspeção; um `detected=false` zera a contagem. Com o detector a ~10 Hz, `confirm_frames: 3` leva ~0,3 s, e a varredura anda ~4,5° nesse tempo.
+- **Readquisição:** só a perda do alvo (`alvo perdido`) leva a nova varredura. A contagem é de perdas **seguidas**: zera a cada vez que o alvo é centralizado. Outros abortos do servo (preso no limite, goal recusado) voltam ao IDLE com o motivo.
+- **Uma passada por varredura:** a SEARCHING termina ao fim do padrão do `scan_node`, mesmo antes de `scan_timeout_s`.
+- O `equipment_file` do gerenciador precisa ser o mesmo do `detector_node`. Uma chave que só um dos dois conhece é recusada com a mensagem do detector.
+- O `error_px` do status vem do feedback da `Center` e é atualizado a 5 Hz.
+- Para os gráficos, acrescente `/inspection/status` ao `ros2 bag record` da seção 4.2.
+
+---
+
+## 7. Solução de problemas
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
@@ -883,13 +958,15 @@ Roteiro curto para gravar o dataset de verdade:
 | `[FATAL] ... model_path "..." não encontrado` no detector | pesos não baixados ou em outra pasta | baixe com o comando da seção 2.2 ou ajuste `model_path` |
 | Detector com poucos quadros/s ou atraso alto | inferência em CPU | reduza `imgsz` (480 ou 320); confira `free -h`; feche abas extras da página |
 | `/perception/target` não publica nada | sem filtro ativo (é o esperado) | `ros2 service call /perception/set_target ...` com uma chave do yaml |
+| Aba Inspeção em `Gerenciador indisponível (inspection_manager não respondeu)` | `inspection_manager` fora do ar ou iniciado em outro `ROS_DOMAIN_ID` | confira o terminal dele e `ros2 node list`; suba de novo com o comando da seção 6.1 |
+| `/inspection/start` recusado com `Indisponível: ...` | servidor de action ou detector fora do ar (ou ainda subindo) | suba o launch indicado na mensagem e espere alguns segundos |
 | `ros2 param dump` com valores diferentes do yaml | nó iniciado sem `--ros-args --params-file` (ex.: `--ros_param`, que é ignorado) | suba de novo com o comando da seção 2 |
 
 ---
 
-## 7. Roteiros futuros
+## 8. Roteiros futuros
 
 Seções a acrescentar aqui quando os itens existirem:
 
 - `pantilt_control`: sintonia e ensaios do `visual_servo_node` (tarefa E) e `controllers/fuzzy.py`;
-- `pantilt_manager`: `inspection_manager` e inspeção pela página.
+- `pantilt_web`: inspeção pela página (aba Inspeção com o `inspection_manager`).

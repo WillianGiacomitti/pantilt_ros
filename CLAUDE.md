@@ -45,6 +45,8 @@ ros2 launch pantilt_bringup control.launch.py       # scan_node + visual_servo_n
 ros2 launch pantilt_web web.launch.py               # página (8080), rosbridge (9090), web_video_server (8081)
 ros2 launch pantilt_bringup dataset.launch.py       # coleta: câmera + capture_node (+ hardware, controle e web)
 ros2 launch pantilt_bringup perception.launch.py    # camera_node + detector_node (pesos em /ros2_ws/models)
+ros2 run pantilt_manager inspection_manager --ros-args \
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml   # gerenciador (ainda sem launch)
 ros2 launch pantilt_bringup system.launch.py        # (a criar)
 
 # conferir interfaces
@@ -89,7 +91,7 @@ docs/                 architecture.md (fonte da verdade), testes.md (roteiros de
 - [x] `pantilt_control`: `controllers/{base,pid}.py` com pytest (tarefa C)
 - [x] `pantilt_control`: `visual_servo_node`: testado com planta simulada e no hardware (08/10/2026) (tarefa D)
 - [ ] `pantilt_control`: teste de sinais e sintonia no hardware (tarefa E)
-- [ ] `pantilt_manager`: `inspection_manager`
+- [x] `pantilt_manager`: `inspection_manager`: `state_machine.py` com pytest; testado com planta simulada e no hardware (08/10/2026)
 - [ ] `pantilt_web`: testar com a inspecao
 - [ ] `pantilt_bringup`: launch files e config (feitos: `hardware.launch.py`, `control.launch.py`, `dataset.launch.py`, `perception.launch.py`; falta `system`)
 - [ ] `pantilt_control`: `controllers/fuzzy.py` (depois; a interface já deve estar pronta)
@@ -202,8 +204,9 @@ Decisões tomadas durante as tarefas (já registradas na §4.5 ou no código, n�
 Roteiro de base: `docs/testes.md` §4.2.
 
 1. Com `kp = 0.2` e `ki = kd = 0`, verificar o sentido de giro e fixar
-   `invert_pan` / `invert_tilt` no `params.yaml` (hoje ambos `false`; pela calibração, o
-   esperado é `invert_tilt = true`). Fazer isso com a mão no botão de parada.
+   `invert_pan` / `invert_tilt` no `params.yaml` (hoje `invert_pan = false` e
+   `invert_tilt = true`, como a calibração previa; a inspeção já centralizou com eles, mas
+   falta o registro formal na §4.2). Fazer isso com a mão no botão de parada.
 2. Subir `kp` até 0,8–1,0; observar sobressinal e oscilação.
 3. Ativar `ki` só depois, no ensaio com alvo em movimento.
 4. Registrar em `docs/testes.md` §4.2 os resultados: sinais, CENTER, TRACK, alvo perdido,
@@ -211,13 +214,37 @@ Roteiro de base: `docs/testes.md` §4.2.
 5. Gravar `ros2 bag record --include-hidden-topics /perception/target /ptu/cmd_vel_auto
    /joint_states /camera/camera_info /control/center/_action/feedback` para os gráficos do TCC.
 
-**Depois disso**, na ordem da §12 do `architecture.md`: `inspection_manager`, teste da
-inspeção pela página, `system.launch.py`, `controllers/fuzzy.py` e scripts de ensaio.
+A tarefa E está **em espera**: o autor sintoniza quando o sistema completo estiver funcionando.
+Até lá, os demais itens usam os ganhos atuais do `params.yaml`.
+
+### `inspection_manager` — CONCLUÍDO (08/10/2026)
+
+`architecture.md` v0.5 (§4.3 com o comportamento detalhado e §6 ajustada), comentário do
+`ListEquipment.srv` corrigido (lista só o yaml), pacote `pantilt_manager` com `state_machine.py`
+(lógica pura, `InspectionMachine` devolve ações para o nó executar) + `test_state_machine.py`, e
+`inspection_manager.py`. Feito em duas etapas, com o pytest como portão. Testado com planta
+simulada (scratchpad; `scan_node`, `visual_servo_node` e `command_mux` reais) e no hardware.
+Roteiro em `docs/testes.md` §6.1 (as seções seguintes do `testes.md` viraram §7 e §8).
+
+Decisões tomadas durante a tarefa (já registradas na §4.3/§6, não reabrir):
+- o `/inspection/start` espera a resposta do `set_target` (até 2 s) e repassa a recusa do
+  detector; recusa também com servidor fora do ar, chave desconhecida ou operador no controle;
+- confirmação: `confirm_frames` alvos **consecutivos**, com a chave da inspeção e `header.stamp`
+  posterior à resposta do `set_target`;
+- **uma passada** de varredura por SEARCHING; terminou sem confirmar → IDLE ("alvo não encontrado");
+- só a `Center` abortada com `alvo perdido` leva a nova varredura (o `Center.Result` não tem
+  código de motivo; o gerenciador compara o texto, `LOST_MESSAGE` em `state_machine.py`);
+  `max_reacquire` conta perdas **consecutivas**, zeradas a cada `centered=true`; outros abortos → IDLE;
+- STOP e qualquer jog da página abortam a inspeção (um zero da web também passa a fonte a `web`);
+- `equipment_file` igual ao do `detector_node` (hoje o `equipment_coco_test.yaml`).
+
+**Próximos passos**, na ordem da §12 do `architecture.md`: teste da inspeção pela página,
+`system.launch.py`, tarefa E (sintonia), `controllers/fuzzy.py` e scripts de ensaio.
 
 **Pendências sem prazo:**
 - melhorias do `scan_node` em `docs/diagnostico_encoders.md` §4;
-- comentário do `ListEquipment.srv`: ainda diz "cruzado com as classes do modelo". Ajustar na
-  tarefa do `inspection_manager`, que lista só o yaml (architecture.md §4.3, v0.3).
+- `.gitignore` não cobre os `.pytest_cache` de `pantilt_control`, `pantilt_hardware` e
+  `pantilt_perception`.
 
 ## Armadilhas conhecidas
 
@@ -233,5 +260,6 @@ inspeção pela página, `system.launch.py`, `controllers/fuzzy.py` e scripts de
 - **Atraso da imagem em rotinas que movem os eixos:** depois de mover, espere o eixo parar E descarte os alvos com `header.stamp` anterior à parada. Sem isso, calibração e medidas ficam enviesadas.
 - **Telemetria = encoders:** a posição em `/joint_states` vem dos encoders AS5600, não da contagem de passos. Um encoder ruim produz um ângulo falso e plausível, e os limites do bridge e o `scan_node` confiam nele. Antes de qualquer malha fechada, confira `/joint_states` com jog curto (`docs/testes.md` §1.2).
 - **Ctrl+C em nós com `SignalHandlerOptions.NO`:** o `KeyboardInterrupt` só chega quando a thread principal volta ao Python. Um `executor.spin()` sem timer fica bloqueado em C, e o nó não sai. Use laço com `spin_once(timeout_sec=0.1)`, como no `scan_node`.
+- **Futures fora dos callback groups:** no rclpy do Humble, os callbacks de `add_done_callback` (resposta e resultado de goals, resposta de services) rodam como tasks do executor, sem respeitar os callback groups. Com `MultiThreadedExecutor`, eles concorrem com as assinaturas e os timers: proteja o estado com um lock, como no `inspection_manager`.
 - **CLI do ROS lenta:** no volume 9p, um `ros2 topic echo`/`hz` leva vários segundos para começar a receber. Timeouts curtos dão falsa impressão de tópico mudo; para medir, prefira um script `rclpy` ou espere mais.
 - **Coleta de dataset e disco:** `/ros2_ws` é o `C:` do Windows, com pouco espaço livre. Nunca grave imagens cruas com `ros2 bag` por longos períodos (~20 MB/s); a coleta usa MP4.
