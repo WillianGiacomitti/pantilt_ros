@@ -92,7 +92,7 @@ docs/                 architecture.md (fonte da verdade), testes.md (roteiros de
 - [x] `pantilt_control`: `visual_servo_node`: testado com planta simulada e no hardware (08/10/2026) (tarefa D)
 - [ ] `pantilt_control`: teste de sinais e sintonia no hardware (tarefa E)
 - [x] `pantilt_manager`: `inspection_manager`: `state_machine.py` com pytest; testado com planta simulada e no hardware (08/10/2026)
-- [ ] `pantilt_web`: testar com a inspecao
+- [x] `pantilt_web`: testar com a inspecao
 - [ ] `pantilt_bringup`: launch files e config (feitos: `hardware.launch.py`, `control.launch.py`, `dataset.launch.py`, `perception.launch.py`; falta `system`)
 - [ ] `pantilt_control`: `controllers/fuzzy.py` (depois; a interface já deve estar pronta)
 
