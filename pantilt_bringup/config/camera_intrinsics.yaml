@@ -1,0 +1,24 @@
+# Gerado pelo calibration_node em 2026-10-08 17:15:09
+# pan:  fx = 859.8 px | RMS 0.50 px | 7 pontos | FOV_h 40.8° | pan+ desloca o alvo para a esquerda na imagem
+# tilt: fy = 991.3 px | RMS 0.90 px | 7 pontos | FOV_v 27.2° | tilt+ desloca o alvo para baixo na imagem
+# cx e cy fixos no centro geométrico (docs/architecture.md, seção 4.10)
+image_width: 640
+image_height: 480
+camera_name: pantilt_cam
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [859.8496477342624, 0.0, 320.0, 0.0, 991.294796786793, 240.0, 0.0, 0.0, 1.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.0, 0.0, 0.0, 0.0, 0.0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [859.8496477342624, 0.0, 320.0, 0.0, 0.0, 991.294796786793, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0]
