@@ -2,7 +2,7 @@
 Camada de percepção (docs/architecture.md, seções 4.1 e 4.2).
 
 Sobe os nós do pantilt_perception com os parâmetros do params.yaml:
-  - camera_node (publica /camera/image_raw);
+  - camera_node (publica /camera/image_raw e /camera/camera_info);
   - detector_node (YOLO: /perception/detections, /perception/target,
     /perception/debug_image e o service /perception/set_target).
 

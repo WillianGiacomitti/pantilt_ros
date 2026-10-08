@@ -8,17 +8,20 @@ Tópicos:
   assina   /ptu/cmd_vel_auto    (geometry_msgs/Twist)     - scan_node, visual_servo_node
   assina   /ptu/cmd_vel_web     (geometry_msgs/Twist)     - interface web
   assina   /ptu/cmd_pos_web     (sensor_msgs/JointState)  - interface web
+  assina   /ptu/cmd_pos_auto    (sensor_msgs/JointState)  - calibration_node
   publica  /ptu/cmd_vel         (geometry_msgs/Twist)     - angular.z = pan, angular.y = tilt (rad/s)
   publica  /ptu/cmd_pos         (sensor_msgs/JointState)  - posição absoluta (rad)
   publica  /ptu/control_source  (std_msgs/String)         - web, auto ou none (transient_local)
 
 Segurança:
-  - um comando da web assume o controle na hora; comandos automáticos são
-    descartados enquanto a web tiver publicado nos últimos operator_hold_s;
+  - um comando da web assume o controle na hora; comandos automáticos, de
+    velocidade ou de posição, são descartados enquanto a web tiver publicado
+    nos últimos operator_hold_s;
   - se a fonte ativa ficar em silêncio por mais de cmd_timeout_s depois de uma
     velocidade não nula, envia velocidade zero uma vez. O firmware mantém a
     última velocidade e o heartbeat do bridge impede o fail-safe, então sem
-    isso um nó de controle travado deixaria o eixo girando.
+    isso um nó de controle travado deixaria o eixo girando. Comandos de
+    posição (web ou auto) não armam o watchdog: são um alvo a atingir.
 
 Parâmetros: ver declare_parameter abaixo e pantilt_bringup/config/params.yaml.
 """
@@ -80,6 +83,7 @@ class CommandMuxNode(Node):
         self.create_subscription(Twist, '/ptu/cmd_vel_auto', self.on_cmd_vel_auto, 10)
         self.create_subscription(Twist, '/ptu/cmd_vel_web', self.on_cmd_vel_web, 10)
         self.create_subscription(JointState, '/ptu/cmd_pos_web', self.on_cmd_pos_web, 10)
+        self.create_subscription(JointState, '/ptu/cmd_pos_auto', self.on_cmd_pos_auto, 10)
 
         self.source = None
         self._update_source(time.monotonic())
@@ -107,6 +111,16 @@ class CommandMuxNode(Node):
                 throttle_duration_sec=LOG_THROTTLE_S)
             return
         self.vel_pub.publish(msg)
+        self._update_source(now)
+
+    def on_cmd_pos_auto(self, msg: JointState):
+        now = time.monotonic()
+        if not self.arbiter.on_auto(now, is_velocity=False):
+            self.get_logger().info(
+                'Comando automático de posição descartado: operador no controle',
+                throttle_duration_sec=LOG_THROTTLE_S)
+            return
+        self.pos_pub.publish(msg)
         self._update_source(now)
 
     # ---------------- Watchdog e fonte ativa ----------------

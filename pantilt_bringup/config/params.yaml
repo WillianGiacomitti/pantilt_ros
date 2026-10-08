@@ -25,6 +25,10 @@ camera_node:
     height: 480
     fps: 30.0                      # taxa máxima de publicação
     frame_id: "camera_optical_frame"  # frame do header
+    # intrínsecos para /camera/camera_info: gerado pelo calibration_node; ausente -> K zerada
+    # (sem calibração). Lido só no início: depois de calibrar, reinicie o camera_node
+    camera_info_file: "/ros2_ws/src/pantilt_ros/pantilt_bringup/config/camera_intrinsics.yaml"
+    camera_name: "pantilt_cam"     # nome gravado no arquivo de calibração
 
 detector_node:
   ros__parameters:
@@ -35,6 +39,19 @@ detector_node:
     imgsz: 640                     # tamanho de inferência (múltiplo de 32); menor = mais rápido em CPU
     device: "cpu"                  # "cpu" ou "cuda:0" (o container atual não tem CUDA)
     publish_debug_image: true      # imagem com as bboxes para a web (só desenhada com assinante)
+
+calibration_node:
+  ros__parameters:
+    probe_deg: 3.0                 # amplitude da sondagem inicial do pan (f grosseiro)
+    max_angle_deg: 10.0            # ângulo máximo da grade em cruz (limita a distorção; máx. 20)
+    n_points: 7                    # pontos por eixo, simétricos em torno do home
+    samples_per_point: 5           # alvos por ponto (usa a mediana)
+    settle_tol_deg: 0.2            # tolerância para considerar a junta parada no alvo
+    settle_extra_s: 0.4            # espera extra após a parada (atraso da imagem)
+    min_points: 4                  # mínimo de pontos válidos por eixo (pelo menos 3)
+    # arquivo gerado: o mesmo camera_info_file do camera_node
+    output_file: "/ros2_ws/src/pantilt_ros/pantilt_bringup/config/camera_intrinsics.yaml"
+    camera_name: "pantilt_cam"     # nome gravado no arquivo (igual ao do camera_node)
 
 scan_node:
   ros__parameters:

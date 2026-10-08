@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
 Captura quadros de uma câmera, stream ou arquivo de vídeo e publica em
-/camera/image_raw (docs/architecture.md, seção 4.1).
+/camera/image_raw, junto com os intrínsecos em /camera/camera_info
+(docs/architecture.md, seção 4.1).
 
 Tópicos:
-  publica  /camera/image_raw  (sensor_msgs/Image, bgr8)  - QoS sensor data
+  publica  /camera/image_raw    (sensor_msgs/Image, bgr8)    - QoS sensor data
+  publica  /camera/camera_info  (sensor_msgs/CameraInfo)     - QoS sensor data, mesmo header da imagem
 
 Fontes (parâmetro source, ver camera_source.parse_source):
   - índice ou caminho V4L2 ("0", "/dev/video0"): pede MJPG, a resolução e a
@@ -17,6 +19,12 @@ A leitura roda numa thread própria, que lê continuamente e publica no máximo
 fps quadros por segundo, sempre o mais recente. Assim o buffer do OpenCV não
 acumula atraso, o que prejudicaria a malha IBVS. Se a fonte falhar (câmera
 desconectada, stream caiu), a captura é reaberta a cada RECONNECT_INTERVAL_S.
+
+Intrínsecos (camera_info_file, gerado pelo calibration_node; ver
+camera_info_file.py): lidos uma vez, no início. Sem o arquivo, ou com um
+arquivo inválido, o CameraInfo sai com K zerada ("sem calibração") e a imagem
+continua sendo publicada. Uma resolução diferente da do arquivo só gera aviso:
+os valores não são reescalados, e a calibração deve ser refeita.
 
 Parâmetros: ver declare_parameter abaixo e pantilt_bringup/config/params.yaml.
 """
@@ -31,8 +39,9 @@ from cv_bridge import CvBridge
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CameraInfo, Image
 
+from pantilt_perception.camera_info_file import load_camera_info
 from pantilt_perception.camera_source import (
     KIND_DEVICE, KIND_FILE, KIND_URL, FrameThrottle, fourcc_to_str, parse_source,
     validate_params,
@@ -64,12 +73,18 @@ class CameraNode(Node):
         self.declare_parameter('height', 480)
         self.declare_parameter('fps', 30.0)
         self.declare_parameter('frame_id', 'camera_optical_frame')
+        self.declare_parameter(
+            'camera_info_file',
+            '/ros2_ws/src/pantilt_ros/pantilt_bringup/config/camera_intrinsics.yaml')
+        self.declare_parameter('camera_name', 'pantilt_cam')
 
         source = str(self.get_parameter('source').value)
         self.width = self.get_parameter('width').value
         self.height = self.get_parameter('height').value
         self.fps = float(self.get_parameter('fps').value)
         self.frame_id = self.get_parameter('frame_id').value
+        self.camera_info_file = self.get_parameter('camera_info_file').value
+        self.camera_name = self.get_parameter('camera_name').value
 
         try:
             self.kind, self.target = parse_source(source)
@@ -91,9 +106,51 @@ class CameraNode(Node):
         self.throttle = FrameThrottle(self.fps)
         self.image_pub = self.create_publisher(Image, '/camera/image_raw', qos_profile_sensor_data)
 
+        self.intrinsics = self._load_intrinsics()
+        # Modelo reaproveitado a cada quadro: só o header e o tamanho mudam. Só a
+        # thread de captura o usa, e o publish serializa na hora
+        self.info_msg = self._make_info_template()
+        self.info_pub = self.create_publisher(
+            CameraInfo, '/camera/camera_info', qos_profile_sensor_data)
+
         self.stop_event = threading.Event()
         self.capture_thread = threading.Thread(target=self.capture_loop, daemon=True)
         self.capture_thread.start()
+
+    # ---------------- Intrínsecos ----------------
+    def _load_intrinsics(self):
+        """Lê o arquivo de calibração. Retorna CameraIntrinsics, ou None para K zerada."""
+        try:
+            intrinsics = load_camera_info(self.camera_info_file)
+        except ValueError as e:
+            self.get_logger().error(f'Arquivo de calibração inválido: {e}; CameraInfo com K zerada')
+            return None
+        if intrinsics is None:
+            self.get_logger().warn(
+                f'Sem arquivo de calibração ({self.camera_info_file}): CameraInfo com K '
+                'zerada; rode o calibration_node')
+            return None
+
+        self.get_logger().info(
+            f'Calibração: fx={intrinsics.fx:.1f}, fy={intrinsics.fy:.1f}, '
+            f'cx={intrinsics.cx:.1f}, cy={intrinsics.cy:.1f} '
+            f'({intrinsics.width}x{intrinsics.height}) de {self.camera_info_file}')
+        if intrinsics.camera_name != self.camera_name:
+            self.get_logger().warn(
+                f'O arquivo de calibração é da câmera "{intrinsics.camera_name}", e o '
+                f'parâmetro camera_name é "{self.camera_name}"')
+        return intrinsics
+
+    def _make_info_template(self) -> CameraInfo:
+        """CameraInfo sem header nem tamanho. Sem calibração, K, R e P ficam zerados."""
+        msg = CameraInfo()
+        if self.intrinsics is not None:
+            msg.distortion_model = self.intrinsics.distortion_model
+            msg.d = list(self.intrinsics.d)
+            msg.k = list(self.intrinsics.k)
+            msg.r = list(self.intrinsics.r)
+            msg.p = list(self.intrinsics.p)
+        return msg
 
     # ---------------- Abertura da fonte ----------------
     def open_capture(self):
@@ -192,6 +249,11 @@ class CameraNode(Node):
             self.get_logger().warn(
                 f'A fonte entrega {w}x{h} em vez de {self.width}x{self.height}; '
                 'publicando no tamanho nativo')
+        calib = self.intrinsics
+        if calib is not None and (w, h) != (calib.width, calib.height):
+            self.get_logger().warn(
+                f'Calibração feita para {calib.width}x{calib.height}, mas a fonte entrega '
+                f'{w}x{h}: valores não reescalados; refaça a calibração')
 
     def _publish(self, frame, stamp):
         encoding = 'mono8' if frame.ndim == 2 else 'bgr8'
@@ -199,6 +261,12 @@ class CameraNode(Node):
         msg.header.stamp = stamp.to_msg()
         msg.header.frame_id = self.frame_id
         self.image_pub.publish(msg)
+
+        info = self.info_msg
+        info.header = msg.header
+        info.width = msg.width
+        info.height = msg.height
+        self.info_pub.publish(info)
 
     def destroy_node(self):
         self.stop_event.set()

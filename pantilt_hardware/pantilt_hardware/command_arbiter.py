@@ -10,7 +10,9 @@ Regras (docs/architecture.md, seção 4.6):
   - watchdog: se a fonte ativa ficar em silêncio por mais de cmd_timeout_s
     depois de uma velocidade não nula, pede o envio de velocidade zero uma vez.
     Comandos de posição e velocidades nulas não armam o watchdog: um zero
-    depois de um comando de posição interromperia o movimento no firmware.
+    depois de um comando de posição interromperia o movimento no firmware;
+  - posição automática (/ptu/cmd_pos_auto): segue a mesma prioridade das
+    velocidades automáticas e, como a posição da web, desarma o watchdog.
 """
 
 SOURCE_WEB = 'web'
@@ -46,12 +48,15 @@ class CommandArbiter:
         self._last_web = now
         self._forwarded(now, SOURCE_WEB, arm=is_velocity and not is_zero)
 
-    def on_auto(self, now: float, is_zero: bool) -> bool:
-        """Registra uma velocidade automática. Retorna False se ela deve ser descartada."""
+    def on_auto(self, now: float, is_zero: bool = False, is_velocity: bool = True) -> bool:
+        """
+        Registra um comando automático (velocidade ou posição). Retorna False
+        se ele deve ser descartado.
+        """
         if self.operator_holding(now):
             return False
         self._last_auto = now
-        self._forwarded(now, SOURCE_AUTO, arm=not is_zero)
+        self._forwarded(now, SOURCE_AUTO, arm=is_velocity and not is_zero)
         return True
 
     def check_watchdog(self, now: float):

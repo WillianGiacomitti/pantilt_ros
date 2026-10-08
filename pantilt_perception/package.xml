@@ -3,12 +3,14 @@
 <package format="3">
   <name>pantilt_perception</name>
   <version>0.1.0</version>
-  <description>Percepção do pan-tilt: captura de imagem e detecção YOLO.</description>
+  <description>Percepção do pan-tilt: captura de imagem, detecção YOLO e calibração da câmera.</description>
   <maintainer email="willian@todo.com">Willian Luiz Giacomitti</maintainer>
   <license>MIT</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-numpy</exec_depend>

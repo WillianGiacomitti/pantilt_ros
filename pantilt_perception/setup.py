@@ -14,13 +14,14 @@ setup(
     zip_safe=True,
     maintainer='Willian Luiz Giacomitti',
     maintainer_email='willian@todo.com',
-    description='Percepção do pan-tilt: captura de imagem e detecção YOLO.',
+    description='Percepção do pan-tilt: captura de imagem, detecção YOLO e calibração da câmera.',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'camera_node = pantilt_perception.camera_node:main',
             'detector_node = pantilt_perception.detector_node:main',
+            'calibration_node = pantilt_perception.calibration_node:main',
         ],
     },
 )

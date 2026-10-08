@@ -13,6 +13,7 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 - [2. pantilt_perception](#2-pantilt_perception)
   - [2.1 camera_node](#21-camera_node)
   - [2.2 detector_node](#22-detector_node)
+  - [2.3 calibration_node](#23-calibration_node)
 - [3. pantilt_web](#3-pantilt_web)
 - [4. pantilt_control](#4-pantilt_control)
 - [5. pantilt_dataset](#5-pantilt_dataset)
@@ -26,7 +27,7 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 | Pacote | O que valida | ESP32 | Câmera |
 |---|---|---|---|
 | `pantilt_hardware` | serial, telemetria, limites de ângulo, fail-safe, prioridade e watchdog do mux | sim (o mux pode ser testado sem ela) | não |
-| `pantilt_perception` | `camera_node`: taxa, QoS, perda e retorno da câmera; `detector_node`: detecções, filtro, alvo, imagem de debug, tempo de inferência | não | sim (ou um vídeo gravado) |
+| `pantilt_perception` | `camera_node`: taxa, QoS, perda e retorno da câmera, `camera_info`; `detector_node`: detecções, filtro, alvo, imagem de debug, tempo de inferência; `calibration_node`: `f_x`/`f_y`, recusas e interrupções | só no `calibration_node` | sim (ou um vídeo gravado, exceto no `calibration_node`) |
 | `pantilt_web` | vídeo na página, reconexão, jog com o hardware | só no jog | sim |
 | `pantilt_control` | `scan_node`: varredura, cancelamento, prioridade do operador, abortos | sim | não |
 | `pantilt_dataset` | `capture_node`: MP4 + `.json`, recusas, varredura durante a gravação, disco; `dataset.launch.py` e painel de coleta da página | só com varredura | sim |
@@ -214,9 +215,9 @@ Para registrar o ensaio (opcional): `ros2 bag record /joint_states /ptu/cmd_vel 
 
 ### 1.4 command_mux
 
-O `command_mux` é o único caminho de comandos até o bridge (architecture.md §4.6). Ele assina `/ptu/cmd_vel_auto`, `/ptu/cmd_vel_web` e `/ptu/cmd_pos_web`, repassa para `/ptu/cmd_vel` e `/ptu/cmd_pos` e publica a fonte ativa (`web`, `auto` ou `none`) em `/ptu/control_source`.
+O `command_mux` é o único caminho de comandos até o bridge (architecture.md §4.6). Ele assina `/ptu/cmd_vel_auto`, `/ptu/cmd_vel_web`, `/ptu/cmd_pos_web` e `/ptu/cmd_pos_auto`, repassa para `/ptu/cmd_vel` e `/ptu/cmd_pos` e publica a fonte ativa (`web`, `auto` ou `none`) em `/ptu/control_source`.
 
-- **Prioridade:** um comando da web é repassado na hora. Os comandos automáticos são descartados enquanto a web tiver publicado nos últimos `operator_hold_s` (1,0 s).
+- **Prioridade:** um comando da web é repassado na hora. Os comandos automáticos (velocidade e posição) são descartados enquanto a web tiver publicado nos últimos `operator_hold_s` (1,0 s).
 - **Watchdog:** depois de uma velocidade **não nula**, se a fonte ativa ficar em silêncio por mais de `cmd_timeout_s` (0,3 s), o mux envia velocidade zero uma única vez. Comandos de posição não armam o watchdog, porque um zero interromperia o movimento de posição.
 
 Estes testes não precisam da ESP32. Sem ela, o `serial_bridge_node` fica registrando `Falha ao abrir /dev/ttyUSB0` a cada tentativa de reconexão; isso é esperado e não afeta o mux. Com o hardware, observe o eixo.
@@ -226,9 +227,10 @@ Estes testes não precisam da ESP32. Sem ela, o `serial_bridge_node` fica regist
 **Terminal 2: observação**
 
 ```bash
-ros2 node info /command_mux                 # assina os 3 tópicos de entrada; publica /ptu/cmd_vel, /ptu/cmd_pos, /ptu/control_source
+ros2 node info /command_mux                 # assina os 4 tópicos de entrada; publica /ptu/cmd_vel, /ptu/cmd_pos, /ptu/control_source
 ros2 topic echo /ptu/control_source         # transient_local: mostra a fonte atual ao conectar
 ros2 topic echo /ptu/cmd_vel --field angular
+ros2 topic echo /ptu/cmd_pos --field position   # testes 7 e 8
 ```
 
 **Terminal 3: acionamento.** Agora use os tópicos de entrada do mux, **nunca** `/ptu/cmd_vel` direto.
@@ -241,8 +243,12 @@ ros2 topic echo /ptu/cmd_vel --field angular
 | 4 | Posição sem watchdog | `ros2 topic pub --once /ptu/cmd_pos_web sensor_msgs/msg/JointState "{name: [pan_joint, tilt_joint], position: [0.1745, 0.0]}"` | repassado em `/ptu/cmd_pos`; fonte `web` por 1 s e depois `none`; **nenhum** zero em `/ptu/cmd_vel` (com hardware, o eixo chega aos 10°) |
 | 5 | Parada no Ctrl+C | com o `pub` do teste 1 rodando, Ctrl+C no terminal 1 (encerra o launch) | log `Encerrando: enviando velocidade zero` do mux; `/ptu/cmd_vel` recebe `z: 0.0`; o bridge também envia zero ao sair |
 | 6 | Parâmetro inválido | com o launch parado: `ros2 run pantilt_hardware command_mux --ros-args -p cmd_timeout_s:=0.0` | `[FATAL] Parâmetro inválido: cmd_timeout_s deve ser positivo ...` e o nó sai |
+| 7 | Posição automática | `ros2 topic pub --once /ptu/cmd_pos_auto sensor_msgs/msg/JointState "{name: [pan_joint, tilt_joint], position: [0.1745, 0.0]}"` | repassado em `/ptu/cmd_pos`; fonte `auto` por 0,3 s e depois `none`; **nenhum** zero em `/ptu/cmd_vel` (com hardware, o pan chega aos 10°) |
+| 8 | Prioridade sobre a posição automática | jog contínuo pela página (ou `ros2 topic pub -r 10 /ptu/cmd_vel_web geometry_msgs/msg/Twist "{angular: {z: 0.05}}"`) e, durante o jog, o comando do teste 7 | log `Comando automático de posição descartado: operador no controle`; nada novo em `/ptu/cmd_pos`; o jog continua; fonte `web` |
 
-Para registrar: `ros2 bag record /ptu/cmd_vel_auto /ptu/cmd_vel_web /ptu/cmd_pos_web /ptu/cmd_vel /ptu/cmd_pos /ptu/control_source /joint_states`.
+Uma posição automática logo depois de uma velocidade não nula desarma o watchdog: não sai zero que interrompa o movimento. A janela de 0,3 s é curta demais para a CLI; o caso é coberto pelo pytest (`test_posicao_auto_desarma_velocidade_anterior`).
+
+Para registrar: `ros2 bag record /ptu/cmd_vel_auto /ptu/cmd_vel_web /ptu/cmd_pos_web /ptu/cmd_pos_auto /ptu/cmd_vel /ptu/cmd_pos /ptu/control_source /joint_states`.
 
 ### Preste atenção
 
@@ -260,7 +266,7 @@ O `perception.launch.py` sobe o `camera_node` e o `detector_node` juntos (seçã
 
 ### 2.1 camera_node
 
-**O que valida:** o `camera_node` publicando `/camera/image_raw` com a taxa e o QoS certos, e o comportamento quando a câmera some e volta.
+**O que valida:** o `camera_node` publicando `/camera/image_raw` com a taxa e o QoS certos, o comportamento quando a câmera some e volta, e os intrínsecos em `/camera/camera_info` (architecture.md §4.1).
 
 **Terminal 1: câmera.** O nó sobe sozinho com `ros2 run`:
 
@@ -276,6 +282,12 @@ Fonte: device "0" | pedido 640x480 @ 30.0 fps | frame_id "camera_optical_frame"
 Fonte aberta: 640x480 @ 30.0 fps (MJPG)
 ```
 
+Antes da primeira calibração (seção 2.3), também aparece este aviso, uma única vez. É esperado:
+
+```
+Sem arquivo de calibração (/ros2_ws/.../config/camera_intrinsics.yaml): CameraInfo com K zerada; rode o calibration_node
+```
+
 Se aparecer `A fonte entrega WxH em vez de 640x480`, a câmera não aceitou a resolução pedida. O nó publica no tamanho nativo.
 
 **Terminal 2: verificação**
@@ -285,6 +297,9 @@ ros2 param dump /camera_node                # confere que o params.yaml foi lido
 ros2 topic hz /camera/image_raw             # ~19-30 Hz conforme a luz; ~7 Hz indica problema de transporte (seção 6)
 ros2 topic info -v /camera/image_raw        # publisher camera_node: Reliability BEST_EFFORT
 ros2 topic echo /camera/image_raw --field header   # stamp avançando e frame_id camera_optical_frame
+ros2 topic hz /camera/camera_info           # mesma taxa da imagem
+ros2 topic echo /camera/camera_info --field k      # 9 zeros sem calibração
+ros2 topic echo /camera/camera_info --field header # mesmo stamp e frame_id da imagem
 ```
 
 Anote a taxa desta etapa: ela é a referência para a seção 3.
@@ -296,6 +311,36 @@ Anote a taxa desta etapa: ela é a referência para a seção 3.
 | 3 | Câmera desconectada | `usbipd detach --busid <BUSID>` no Windows | log `Fonte "0" parou de entregar quadros; reabrindo` e depois `Não foi possível abrir a fonte "0"` a cada 5 s |
 | 4 | Câmera reconectada | `usbipd attach --wsl --busid <BUSID>` | anote se o nó volta a abrir a fonte sozinho (`Fonte aberta: ...`) ou se precisa ser reiniciado |
 
+**Intrínsecos (`/camera/camera_info`).** Para os testes 6 a 8, crie um arquivo de teste (valores fictícios; o real vem da seção 2.3):
+
+```bash
+cat > /tmp/intr_teste.yaml <<'FIM'
+image_width: 640
+image_height: 480
+camera_name: pantilt_cam
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [600.0, 0.0, 320.0, 0.0, 600.0, 240.0, 0.0, 0.0, 1.0]
+FIM
+```
+
+E suba o nó apontando para ele (Ctrl+C no terminal 1 antes):
+
+```bash
+ros2 run pantilt_perception camera_node --ros-args \
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml \
+  -p camera_info_file:=/tmp/intr_teste.yaml
+```
+
+| # | Teste | Como | Esperado |
+|---|---|---|---|
+| 5 | Sem calibração | comando padrão do terminal 1 (sem `camera_intrinsics.yaml`) | aviso `Sem arquivo de calibração ...` **uma vez**; `--field k` com 9 zeros; `width: 640`, `height: 480`; a imagem segue normal |
+| 6 | Com calibração | comando acima | log `Calibração: fx=600.0, fy=600.0, cx=320.0, cy=240.0 (640x480) de /tmp/intr_teste.yaml`; `k: [600, 0, 320, 0, 600, 240, 0, 0, 1]`; `distortion_model: plumb_bob` |
+| 7 | Mesmo header da imagem | com o teste 6 rodando, compare `ros2 topic echo /camera/camera_info --field header` com o de `/camera/image_raw` | mesmo `frame_id` e os mesmos valores de `stamp` (o `camera_info` sai logo depois da imagem) |
+| 8 | Resolução diferente da calibração | comando acima com `-p width:=320 -p height:=240` | ao abrir a fonte, `Calibração feita para 640x480, mas a fonte entrega 320x240: valores não reescalados; refaça a calibração`; `K` continua a do arquivo |
+| 9 | Arquivo inválido | `echo "image_width: [640" > /tmp/intr_ruim.yaml` e suba com `-p camera_info_file:=/tmp/intr_ruim.yaml` | `[ERROR] Arquivo de calibração inválido: YAML inválido ...; CameraInfo com K zerada`; o nó **continua** publicando a imagem |
+
 Para registrar (opcional): `ros2 bag record /camera/image_raw`. Ocupa ~20 MB/s a 640×480 e 20 Hz; o `/ros2_ws` fica no `C:` do Windows, com pouco espaço. Grave poucos segundos.
 
 ### Preste atenção
@@ -303,6 +348,8 @@ Para registrar (opcional): `ros2 bag record /camera/image_raw`. Ocupa ~20 MB/s a
 - O nó precisa ser iniciado com `--ros-args --params-file`. Um `ros2 param dump` com valores diferentes do yaml indica que o arquivo não foi lido.
 - Taxa em ~7 Hz é problema de transporte (perfil do Fast DDS ou `/dev/shm`), não da câmera.
 - Com pouca luz, a exposição automática derruba a taxa. Compare as medidas sempre com a mesma iluminação.
+- O arquivo de calibração é lido só no início. Depois de calibrar (seção 2.3), **reinicie o `camera_node`** para publicar a `K` nova.
+- A calibração vale só para a resolução em que foi feita. O aviso do teste 8 indica que é preciso calibrar de novo.
 
 ### 2.2 detector_node
 
@@ -395,6 +442,78 @@ Para registrar (opcional): `ros2 bag record /perception/detections /perception/t
 - O `/perception/set_target` responde depois da inferência em andamento (até ~0,1 s).
 - O ultralytics cria `~/.config/Ultralytics/` na primeira execução. É esperado.
 - Classes do COCO estão em inglês (`bottle`, `cell phone`). O `class_name` do yaml precisa ser idêntico ao do modelo; um nome errado aparece no log como `Equipamento "..." ignorado: a classe "..." não existe no modelo`.
+
+### 2.3 calibration_node
+
+**O que valida:** o `calibration_node` (architecture.md §4.10):
+- a estimativa de `f_x` e `f_y` girando a câmera em ângulos conhecidos;
+- a gravação do `camera_intrinsics.yaml`;
+- o retorno ao *home*;
+- as recusas e as interrupções.
+
+O valor medido e a comparação com o FOV do datasheet ficam para a tarefa B. Precisa da ESP32 e da câmera. **Faça antes a seção 1.2:** o ajuste confia no ângulo do encoder.
+
+**Preparação** (um terminal para cada comando, todos com a seção 0 aplicada):
+
+```bash
+ros2 launch pantilt_bringup hardware.launch.py
+ros2 launch pantilt_bringup perception.launch.py
+ros2 launch pantilt_web web.launch.py
+ros2 run pantilt_perception calibration_node --ros-args \
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml
+```
+
+Depois, no terminal de comandos:
+
+1. Ponha um objeto da lista de equipamentos (ex.: uma garrafa) parado, a 1–3 m, com fundo limpo.
+2. `ros2 service call /perception/set_target pantilt_interfaces/srv/SetTarget "{equipment: 'garrafa'}"`
+3. Pela página, centralize o alvo com o jog. Bastam ±20% da meia-largura e da meia-altura (±64 e ±48 px a 640×480).
+4. Zere os eixos pela página (botão de zero) ou com `ros2 service call /ptu/set_zero std_srvs/srv/Trigger`.
+5. Solte o jog e espere 1 s: a fonte precisa sair de `web`.
+
+**Execução:**
+
+```bash
+ros2 service call /calibration/run std_srvs/srv/Trigger   # responde só no fim (~30-60 s)
+```
+
+O nó move o pan ±3° (sondagem) e percorre 7 pontos no pan e depois 7 no tilt, sempre um eixo por vez. Por fim volta ao *home*. No log aparece uma linha por ponto e os resíduos do ajuste. A resposta traz:
+
+```
+Calibração gravada em /ros2_ws/src/pantilt_ros/pantilt_bringup/config/camera_intrinsics.yaml
+pan:  fx = ... px | RMS ... px | 7 pontos | FOV_h ...° | pan+ desloca o alvo para a ... na imagem
+tilt: fy = ... px | RMS ... px | 7 pontos | FOV_v ...° | tilt+ desloca o alvo para ... na imagem
+cx = 320.0, cy = 240.0 (centro). Reinicie o camera_node para publicar a K nova.
+```
+
+| # | Teste | Como | Esperado |
+|---|---|---|---|
+| 1 | Calibração normal | preparação + `run` | `success: True`; os eixos param em cada ponto e voltam ao *home*; arquivo gravado; RMS de poucos px |
+| 2 | `K` nova publicada | reinicie o `perception.launch.py` e rode `ros2 topic echo /camera/camera_info --field k` | log `Calibração: fx=...`; `k` com os valores da resposta e `cx`, `cy` no centro |
+| 3 | Sem filtro | `set_target` com `''` e `run` | `Recusada: nenhum /perception/target recebido ...` ou `último /perception/target tem N s ...` |
+| 4 | Alvo fora do centro | desloque o alvo para a borda e `run` | `Recusada: alvo fora do centro (erro ...)`; nada se move |
+| 5 | Eixos fora de zero | jog de ~5° no pan e `run` | `Recusada: eixos fora de zero (pan 5.0°, ...)`; nada se move |
+| 6 | Jog ativo | segure o jog e, em outro terminal, `run` | `Recusada: operador no controle ...` (a CLI pode atrasar: o jog precisa estar ativo quando a chamada chega) |
+| 7 | Abort no meio | `run` e, durante a grade, `ros2 service call /calibration/abort std_srvs/srv/Trigger` | abort: `Abortando: os eixos voltam ao home`; run: `Calibração interrompida: abortada ... (eixos de volta ao home)`; eixos no *home* |
+| 8 | Operador assume no meio | `run` e, durante a grade, um toque no jog da página | `Calibração interrompida: operador assumiu o controle ... (eixos não foram movidos de volta)`; os eixos **não** voltam sozinhos ao *home* |
+| 9 | Alvo retirado | `run` e, durante a grade do tilt, tire o objeto de cena | avisos `... ponto descartado`; com menos de 4 pontos válidos, `só N pontos válidos no tilt ...` e volta ao *home* |
+| 10 | Ctrl+C no meio | `run` e Ctrl+C no terminal do `calibration_node` | o nó sai; os eixos param no último ponto e **não** voltam ao *home* |
+| 11 | Abort sem rotina | `abort` com o nó ocioso | `success: False`, `Nenhuma calibração em andamento` |
+
+Para registrar: `ros2 bag record /perception/target /joint_states /ptu/cmd_pos_auto /ptu/control_source`.
+
+### Preste atenção
+
+- **Interpretação** (architecture.md §4.10):
+  - RMS abaixo de ~2 px é bom;
+  - resíduos grandes e sistemáticos nas pontas indicam distorção: reduza `max_angle_deg`;
+  - resíduos grandes e dispersos indicam o encoder;
+  - `f_x` longe de `(W/2)/tan(FOV_h/2)` em mais de ~15% é motivo para desconfiar.
+- **Sentido dos eixos:** a resposta diz para que lado o alvo anda com cada eixo positivo. Anote: isso adianta o `invert_pan`/`invert_tilt` da tarefa E.
+- **Junta que não para:** `o pan parou em X°, a Y° do alvo ...` mostra que o firmware para fora da tolerância. Aumente `settle_tol_deg`; o ajuste usa o ângulo medido, não o comandado. Já `não parou ... (velocidade V°/s)` com o eixo visivelmente parado indica velocidade da telemetria ruidosa em repouso (seção 1.2, teste 5).
+- **Resolução:** a calibração vale para a resolução do quadro (640×480). Mudou a resolução ou a câmera, calibre de novo.
+- O `run` bloqueia o terminal até o fim. Use outro terminal para o `abort`.
+- O arquivo é gravado em `pantilt_bringup/config` (dentro do repositório). Decida se ele entra no commit.
 
 ---
 

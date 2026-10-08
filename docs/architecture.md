@@ -6,7 +6,8 @@ Este documento é a **fonte da verdade** para nomes de nós, tópicos, services,
 
 - **Autor:** Willian Luiz Giacomitti
 - **Orientador:** Prof. Dr. Ronnier Frates Rohrich
-- **Versão do documento:** 0.3 (02/10/2026): comportamento do `detector_node` detalhado (alvo só com filtro, quadros descartados, pesos locais) e `ListEquipment` lido só do yaml
+- **Versão do documento:** 0.4 (08/10/2026): camada de controle e calibração (`CameraInfo` no `camera_node`, especificação completa do `visual_servo_node`, `/ptu/cmd_pos_auto` no `command_mux`, novo `calibration_node`, métricas precisadas)
+  - 0.3 (02/10/2026): comportamento do `detector_node` detalhado (alvo só com filtro, quadros descartados, pesos locais) e `ListEquipment` lido só do yaml
 - **Plataforma:** ROS 2 Humble · Python (rclpy) · Docker em Windows/WSL2
 
 ---
@@ -80,7 +81,7 @@ Camadas e pacotes:
 | Camada | Pacote | Nós |
 |---|---|---|
 | Interfaces (contratos) | `pantilt_interfaces` | — (msg, srv, action) |
-| Percepção | `pantilt_perception` | `camera_node`, `detector_node` |
+| Percepção | `pantilt_perception` | `camera_node`, `detector_node`, `calibration_node` |
 | Decisão | `pantilt_manager` | `inspection_manager` |
 | Controle | `pantilt_control` | `scan_node`, `visual_servo_node` |
 | Acionamento | `pantilt_hardware` | `command_mux`, `serial_bridge_node` |
@@ -89,6 +90,8 @@ Camadas e pacotes:
 | Ferramenta auxiliar | `pantilt_dataset` | `capture_node` (coleta de vídeos para o dataset) |
 
 O `pantilt_dataset` não faz parte do fluxo de inspeção. Ele serve para gravar os vídeos que formam o dataset de treino da YOLO, usando a câmera e a varredura do sistema (seção 4.9).
+
+O `calibration_node` também fica fora do fluxo de inspeção: é uma rotina chamada pelo operador para estimar a distância focal em pixels, de que o `visual_servo_node` depende (seção 4.10).
 
 ---
 
@@ -106,6 +109,18 @@ Captura quadros e publica em `/camera/image_raw`. A fonte é configurável para 
 | `width` / `height` | 640 / 480 | Resolução solicitada |
 | `fps` | 30.0 | Taxa de publicação |
 | `frame_id` | `camera_optical_frame` | Frame do header |
+| `camera_info_file` | `config/camera_intrinsics.yaml` (caminho absoluto no `params.yaml`) | Arquivo gerado pelo `calibration_node` |
+| `camera_name` | `pantilt_cam` | Nome usado no arquivo de calibração |
+
+Além da imagem, o nó publica os parâmetros intrínsecos da câmera em `/camera/camera_info` (`sensor_msgs/CameraInfo`), lidos de um arquivo no formato padrão do ROS (o mesmo do `camera_calibration_parsers`). É assim que `f_x`, `f_y`, `c_x` e `c_y` chegam ao `visual_servo_node`: esses valores nunca são parâmetros do nó de controle nem constantes no código.
+
+- A mensagem de `CameraInfo` usa o **mesmo `header.stamp` e `frame_id`** do quadro correspondente e vai no mesmo perfil de QoS da imagem.
+- Se o arquivo não existir, o nó publica `CameraInfo` com a matriz `K` zerada e registra um aviso único no log. Quem consome trata `f_x = 0` como "sem calibração". Nesse caso `R` e `P` também vão zerados, e `D` e `distortion_model` vazios (convenção de câmera não calibrada do `sensor_msgs/CameraInfo`).
+- Se o arquivo for inválido (YAML malformado, chave obrigatória ausente, `f ≤ 0`), o nó registra um **erro** e segue como sem arquivo: publica a imagem normalmente e o `CameraInfo` com `K` zerada. A imagem continua útil para a web e para a coleta de dataset, e o `visual_servo_node` recusa o goal com mensagem explícita.
+- `CameraInfo.width` e `height` são sempre os do quadro publicado. Se a resolução do arquivo não bater com a do quadro entregue pela fonte, o nó avisa e **não** reescala os valores: a calibração deve ser refeita.
+- Obrigatórios no arquivo: `image_width`, `image_height` e `camera_matrix`. A distorção, a `R` e a `P` são repassadas do arquivo quando existirem (o mesmo leitor serve para um arquivo da calibração por tabuleiro). Se faltarem, valem distorção nula (`plumb_bob`), `R` identidade e `P = [K | 0]`.
+- Um `camera_name` do arquivo diferente do parâmetro só gera aviso.
+- O arquivo é lido só no início. Depois de uma nova calibração, reinicie o `camera_node`.
 
 ### 4.2 `detector_node` (pantilt_perception)
 
@@ -168,21 +183,69 @@ Servidor da action `/control/scan`. Executa uma varredura em zigue-zague: percor
 
 ### 4.5 `visual_servo_node` (pantilt_control)
 
-Servidor da action `/control/center`. Implementa o IBVS: converte o erro em pixels de `/perception/target` em velocidades angulares de pan e tilt, publicadas em `/ptu/cmd_vel_auto`. O laço é disparado a cada nova mensagem de alvo, e o `dt` é calculado pelos timestamps.
+Servidor da action `/control/center`. Implementa a malha IBVS: converte o erro de imagem em velocidade angular dos eixos.
 
-- `controller: pid | fuzzy` escolhe o controlador. Ambos implementam a mesma interface `compute(erro, dt) -> velocidade` em `controllers/pid.py` e `controllers/fuzzy.py`.
-- **Modo CENTER:** termina com sucesso quando `erro < tolerance_px` por `hold_time_s`.
-- **Modo TRACK:** continua corrigindo e sinaliza `centered` no feedback até ser cancelado.
-- **Alvo perdido:** sem alvo por mais de `lost_timeout_s`, publica velocidade zero e aborta.
-- **Sinais:** o sentido de giro depende da montagem mecânica e é ajustado pelos parâmetros `invert_pan` e `invert_tilt` no primeiro teste.
+#### Fundamento
 
-| Parâmetro | Padrão | Descrição |
-|---|---|---|
-| `controller` | `pid` | `pid` ou `fuzzy` |
-| `pan.kp` / `pan.ki` / `pan.kd` | a sintonizar | Ganhos do eixo pan |
-| `tilt.kp` / `tilt.ki` / `tilt.kd` | a sintonizar | Ganhos do eixo tilt |
-| `max_vel_deg_s` | 30.0 | Saturação da saída |
-| `invert_pan` / `invert_tilt` | false / false | Convenção de sinal |
+A lei clássica de IBVS, `v_c = −λ·L⁺·e`, é uma ação proporcional aplicada após o mapeamento geométrico dado pela pseudo-inversa da matriz de interação (CHAUMETTE; HUTCHINSON, 2006). Como o pan-tilt executa rotação pura, as colunas da matriz de interação que dependem da profundidade `Z` desaparecem, e `L⁺` degenera na associação direta entre cada componente do erro e um eixo. Escrevendo o erro como ângulo de linha de visada, `θ = atan(e_px / f)`, o fator `(1 + x²)` da matriz de interação é cancelado de forma exata, porque ele é a derivada da tangente. O resultado é uma planta integradora de ganho unitário em cada eixo, e o controlador se reduz a dois PIDs escalares. Dedução completa na seção teórica da monografia.
+
+#### Pipeline (cinco estágios)
+
+1. **Conversão.** `θ_pan = atan(error_x / f_x)` e `θ_tilt = atan(error_y / f_y)`, com `f_x` e `f_y` vindos de `/camera/camera_info`. Se ainda não houve `CameraInfo` válido (`f_x > 0`), o goal é **rejeitado** com mensagem explícita.
+2. **Controlador.** Duas instâncias independentes criadas pela fábrica `criar_controlador(nome, params)` de `controllers/base.py`, segundo o parâmetro `controller`. A interface é `compute(erro, dt) -> velocidade`. O `dt` é calculado pelos `header.stamp` das mensagens de alvo, não pelo relógio do laço, porque a taxa do detector varia.
+3. **Saturação e anti-windup.** Saída limitada a `max_vel_deg_s`. O integrador é congelado enquanto a saída está saturada, e o termo integral tem teto próprio (`integral_limit_deg_s`).
+4. **Supervisão.** Avalia três condições de término e calcula as métricas:
+   - **centrado:** `error_px ≤ tolerance_px` continuamente por `hold_time_s`;
+   - **perdido:** sem alvo (`detected == false` ou sem mensagem) por `lost_timeout_s`;
+   - **preso no limite:** eixo no limite de software do bridge, com comando empurrando para fora, por mais de `limit_timeout_s`.
+5. **Publicação.** Publica em `/ptu/cmd_vel_auto` a `publish_rate_hz`, repetindo o último comando calculado por até `cmd_hold_s`. Passado esse tempo sem alvo novo, publica zero. Isso desacopla a taxa do detector (~10 Hz) do watchdog de 0,3 s do `command_mux` e evita movimento aos trancos.
+
+#### Semântica da action
+
+| Situação | Resultado |
+|---|---|
+| Modo `MODE_CENTER`, centrado | `success=true`, com `final_error_px` e `convergence_time_s` |
+| Modo `MODE_TRACK`, centrado | a action **continua ativa**; o feedback passa a trazer `centered=true` |
+| Alvo perdido | `success=false`, mensagem "alvo perdido"; velocidade zerada antes de abortar |
+| Preso no limite | `success=false`, mensagem indicando o eixo e o limite atingido |
+| Goal cancelado | velocidade zerada; resultado com `success=false` e mensagem "cancelado" |
+| Novo goal | substitui o anterior (mesmo padrão do `scan_node`); os controladores são reiniciados com `reset()` |
+
+Em qualquer término, o nó publica velocidade zero antes de responder.
+
+#### Parâmetros
+
+| Parâmetro | Padrão | Unidade | Descrição |
+|---|---|---|---|
+| `controller` | `pid` | — | `pid` ou `fuzzy` |
+| `pan.kp` / `tilt.kp` | 0.8 | s⁻¹ | equivale ao ganho λ do IBVS; teto teórico ~3 |
+| `pan.ki` / `tilt.ki` | 0.0 | s⁻² | ativar só no ensaio com alvo em movimento |
+| `pan.kd` / `tilt.kd` | 0.0 | — | ativar só após o PI estável |
+| `derivative_filter_hz` | 2.0 | Hz | filtro de 1ª ordem na derivada |
+| `max_vel_deg_s` | 20.0 | °/s | saturação da saída |
+| `integral_limit_deg_s` | 10.0 | °/s | teto da contribuição integral |
+| `invert_pan` / `invert_tilt` | false | — | convenção de sinal, definida no teste de bancada |
+| `publish_rate_hz` | 20.0 | Hz | estágio 5 |
+| `cmd_hold_s` | 0.25 | s | repetição do último comando |
+| `limit_timeout_s` | 2.0 | s | tempo preso no limite antes de abortar |
+
+#### Organização do código
+
+```
+pantilt_control/
+├── visual_servo_node.py          # ROS: action server, assinaturas, publicação
+├── visual_servo_math.py          # puro: conversão px→ângulo, critérios, métricas
+└── controllers/
+    ├── base.py                   # interface + criar_controlador()
+    ├── pid.py                    # PID posicional com anti-windup
+    └── fuzzy.py                  # (depois) Mamdani, mesma interface
+```
+
+A lógica pura fica fora do nó, com testes em pytest, como já foi feito em `scan_pattern.py`. A troca entre PID e fuzzy deve ser apenas o parâmetro `controller`: nenhum outro arquivo muda.
+
+#### Sinais
+
+O sentido de giro depende da montagem mecânica. O procedimento de bancada (ganho 0,2 s⁻¹, alvo deslocado para um lado) define `invert_pan` e `invert_tilt`, registrados em `docs/testes.md`. O `calibration_node` (seção 4.10) já informa o sentido em que o alvo se desloca na imagem com cada eixo, o que serve de conferência.
 
 ### 4.6 `command_mux` (pantilt_hardware)
 
@@ -191,6 +254,10 @@ Servidor da action `/control/center`. Implementa o IBVS: converte o erro em pixe
 - **Prioridade:** um comando da web assume o controle na hora. Enquanto a web tiver publicado nos últimos `operator_hold_s`, os comandos automáticos são descartados.
 - **Watchdog:** se a fonte ativa ficar em silêncio por mais de `cmd_timeout_s`, envia uma vez velocidade zero. Isso cobre o caso em que um nó de controle trava e o firmware continuaria girando, porque recebe heartbeat do bridge.
 - Publica a fonte ativa (`web`, `auto` ou `none`) em `/ptu/control_source`.
+- **Posição automática:** o caminho automático aceita também comandos de **posição**, em `/ptu/cmd_pos_auto`, encaminhados para `/ptu/cmd_pos`. É o que o `calibration_node` usa para levar os eixos a ângulos conhecidos. Regras:
+  - a prioridade do operador vale igualmente: comandos automáticos de posição são descartados enquanto a web tiver publicado nos últimos `operator_hold_s`;
+  - o watchdog de `cmd_timeout_s` **não** se aplica a comandos de posição, que são um alvo a atingir e não um fluxo contínuo. Uma posição repassada desarma o watchdog de uma velocidade anterior, porque um zero depois dela interromperia o movimento no firmware;
+  - `/ptu/control_source` continua refletindo a fonte ativa: `auto` por `cmd_timeout_s` depois da posição e, em seguida, `none`.
 
 | Parâmetro | Padrão | Descrição |
 |---|---|---|
@@ -253,6 +320,91 @@ Interfaces (em `pantilt_interfaces`):
 | `min_free_gb` | 1.0 | Espaço livre mínimo para gravar |
 | `queue_size` | 30 | Tamanho da fila do escritor |
 
+### 4.10 `calibration_node` (pantilt_perception)
+
+Estima a distância focal em pixels usando o próprio mecanismo: gira a câmera em ângulos conhecidos e mede o deslocamento do alvo na imagem.
+
+#### Fundamento
+
+Pelo modelo pinhole, `u − c_x = f_x · tan(α)`, em que `α` é o ângulo entre o eixo óptico e a linha de visada ao alvo. Sob **rotação pura**, a profundidade do alvo não entra na equação, então a distância até o alvo e o tamanho dele são irrelevantes. É a mesma propriedade que dispensa a estimativa de `Z` no IBVS deste sistema.
+
+Com o alvo fixo no mundo e o eixo no ângulo `θ_i`, o modelo ajustado por eixo é:
+
+```
+e_i = k · tan(θ_i − φ)        f = |k|
+```
+
+- `e_i` é o erro publicado pelo detector (`error_x` no pan, `error_y` no tilt), medido em relação ao centro geométrico da imagem;
+- `φ` é a direção (desconhecida) do alvo em relação ao zero do encoder;
+- o sinal de `k` indica para que lado o alvo se desloca na imagem quando o eixo gira no sentido positivo. O nó informa esse sentido, mas ele não entra no arquivo.
+
+**O ponto principal fica fixo no centro geométrico** (`c_x = W/2`, `c_y = H/2`). Sob rotação pura, um deslocamento de `c` e um de `φ` produzem quase o mesmo efeito na imagem: eles só se distinguem pela curvatura da tangente, que muda ~3% numa grade de ±10°. Uma simulação com 7 pontos a ±10° e 1 px de ruído deu `c` com desvio de ±30 px quando livre, e ainda piorou `f` (±4 px contra ±3 px com `c` fixo; ±19 px contra ±6 px numa grade de ±6°). Como o detector e o `visual_servo_node` medem o erro em relação ao centro geométrico, fixar `c` é também coerente com o uso. O ponto principal só é observável pela calibração por tabuleiro.
+
+Ajustar várias amostras por mínimos quadrados, em vez de usar a fórmula de dois pontos, dá um resíduo que denuncia encoder ruim ou distorção e dispensa centralizar o alvo com precisão.
+
+#### Interface
+
+| Service | Tipo | Função |
+|---|---|---|
+| `/calibration/run` | `std_srvs/Trigger` | Executa a rotina completa e grava o arquivo |
+| `/calibration/abort` | `std_srvs/Trigger` | Interrompe a rotina e devolve os eixos à posição inicial |
+
+A rotina leva dezenas de segundos, e o `run` só responde ao final, com os valores e o resíduo na mensagem. Por isso o service usa `ReentrantCallbackGroup` com `MultiThreadedExecutor`: sem isso, as assinaturas de `/perception/target` e `/joint_states` ficam paradas durante a execução.
+
+O nó assina `/perception/target`, `/joint_states`, `/ptu/control_source` e `/camera/camera_info`. Este último serve só para registrar no log a calibração anterior. Ele publica apenas posições, em `/ptu/cmd_pos_auto`.
+
+#### Pré-condições (verificadas ao receber `run`)
+
+1. `/perception/target` recente com `detected == true` e erro dentro de 20% da meia-dimensão do quadro em cada eixo (alvo aproximadamente centralizado pelo operador);
+2. eixos parados e a no máximo 1° de zero (o operador já usou `/ptu/set_zero`);
+3. `/ptu/control_source` diferente de `web`;
+4. nenhuma rotina em andamento.
+
+Falhando qualquer uma, o service retorna `success=false` com a razão. O nó **não** centraliza o alvo sozinho: essa é a etapa manual do operador, feita pela página web.
+
+#### Rotina
+
+1. Registra a posição inicial (*home*) a partir de `/joint_states`.
+2. **Sondagem:** move o pan `±probe_deg`, mede o deslocamento e estima um `f` grosseiro.
+3. **Grade em cruz adaptativa:** com o `f` grosseiro, escolhe `n_points` ângulos simétricos em torno do *home*. O maior deles é aquele cujo deslocamento previsto fica em torno de 35% da meia-dimensão do quadro (largura no pan, altura no tilt), limitado a `max_angle_deg`. Varre o pan com o tilt no *home* e depois o tilt com o pan no *home*, sempre do ângulo mais negativo para o mais positivo (mesmo sentido de aproximação). A cruz evita o acoplamento entre os eixos e mantém cada ajuste unidimensional.
+4. Em cada ponto: envia a posição por `/ptu/cmd_pos_auto` e espera a junta estabilizar (`|θ − θ_alvo| < settle_tol_deg` com velocidade próxima de zero). Depois espera `settle_extra_s` e coleta `samples_per_point` mensagens de alvo **cujo `header.stamp` seja posterior ao instante de parada**, por causa dos ~115 ms de atraso da imagem. Guarda a mediana do erro e a mediana do ângulo medido nessa janela.
+5. Pontos sem detecção são descartados, com aviso no log. Menos de `min_points` válidos em algum eixo aborta a calibração.
+6. Retorna ao *home* e espera estabilizar. O nó não publica velocidade zero: um `CMD_VEL` nulo logo depois de um `CMD_POS` interromperia o movimento no firmware.
+7. Ajusta os dois modelos por mínimos quadrados não lineares (Levenberg-Marquardt implementado com numpy, sem dependência nova). O chute inicial vem da fórmula de dois pontos com `φ = 0`.
+8. Grava `config/camera_intrinsics.yaml` no formato padrão do ROS (`image_width`, `image_height`, `camera_name`, `camera_matrix`, `distortion_model`, `distortion_coefficients` zerados, `rectification_matrix`, `projection_matrix`). Devolve na mensagem `f_x`, `f_y`, `c_x`, `c_y`, o resíduo RMS em px por eixo, o número de pontos usados, o FOV implícito (`2·atan(W / 2f_x)` e `2·atan(H / 2f_y)`) e o sentido de cada eixo.
+
+**Término e retorno ao *home*:**
+
+| Situação | Retorno ao *home* |
+|---|---|
+| Sucesso, `/calibration/abort`, pontos insuficientes, junta que não estabiliza, erro interno | sim |
+| Operador assumiu o controle (`/ptu/control_source` = `web`) | **não**: o nó para de comandar e o operador fica com o controle |
+| Nó encerrado (Ctrl+C) no meio da rotina | **não**: conta como intervenção do operador; nada se move depois que o nó sai |
+| Sem `/joint_states` | não (sem posição conhecida); o nó só aborta |
+
+#### Parâmetros
+
+| Parâmetro | Padrão | Descrição |
+|---|---|---|
+| `probe_deg` | 3.0 | Amplitude da sondagem inicial |
+| `max_angle_deg` | 10.0 | Ângulo máximo da grade (limita a distorção) |
+| `n_points` | 7 | Pontos por eixo, simétricos em torno do *home* |
+| `samples_per_point` | 5 | Mensagens de alvo por ponto (usa a mediana) |
+| `settle_tol_deg` | 0.2 | Tolerância para considerar a junta parada no alvo |
+| `settle_extra_s` | 0.4 | Espera extra após a parada (atraso da imagem) |
+| `min_points` | 4 | Mínimo de pontos válidos por eixo |
+| `output_file` | `config/camera_intrinsics.yaml` (caminho absoluto no `params.yaml`) | Arquivo gerado; o mesmo `camera_info_file` do `camera_node` |
+| `camera_name` | `pantilt_cam` | Nome gravado no arquivo; o mesmo do `camera_node` |
+
+#### Interpretação do resultado
+
+- resíduo RMS abaixo de ~2 px: bom;
+- resíduo alto, com padrão sistemático nas pontas da grade: distorção radial. Reduza `max_angle_deg` ou faça a calibração por tabuleiro;
+- resíduo alto e disperso: provável erro de encoder;
+- `f_x` distante de `(W/2)/tan(FOV_h/2)` em mais de ~15% (FOV do datasheet): desconfie do encoder ou do FOV declarado.
+
+A calibração por tabuleiro de xadrez (OpenCV) continua sendo o método de referência e permanece como script offline, não como nó. Ela é obrigatória se a OAK-D entrar no projeto ou se a distorção se mostrar relevante.
+
 ---
 
 ## 5. Contratos de comunicação
@@ -262,17 +414,19 @@ Interfaces (em `pantilt_interfaces`):
 | Tópico | Tipo | Publica | Assina | QoS |
 |---|---|---|---|---|
 | `/camera/image_raw` | `sensor_msgs/Image` | camera_node | detector_node | sensor data |
+| `/camera/camera_info` | `sensor_msgs/CameraInfo` | camera_node | visual_servo_node, calibration_node | sensor data (igual ao da imagem) |
 | `/perception/detections` | `vision_msgs/Detection2DArray` | detector_node | web, rosbag | padrão |
 | `/perception/debug_image` | `sensor_msgs/Image` | detector_node | web_video_server | sensor data |
-| `/perception/target` | `pantilt_interfaces/VisualTarget` | detector_node | inspection_manager, visual_servo_node | padrão (depth 1) |
+| `/perception/target` | `pantilt_interfaces/VisualTarget` | detector_node | inspection_manager, visual_servo_node, calibration_node | padrão (depth 1) |
 | `/inspection/status` | `pantilt_interfaces/InspectionStatus` | inspection_manager | web | transient_local |
 | `/ptu/cmd_vel_auto` | `geometry_msgs/Twist` | scan_node, visual_servo_node | command_mux | padrão |
 | `/ptu/cmd_vel_web` | `geometry_msgs/Twist` | web | command_mux | padrão |
 | `/ptu/cmd_pos_web` | `sensor_msgs/JointState` | web | command_mux | padrão |
+| `/ptu/cmd_pos_auto` | `sensor_msgs/JointState` | calibration_node | command_mux | padrão |
 | `/ptu/cmd_vel` | `geometry_msgs/Twist` | command_mux | serial_bridge_node | padrão |
 | `/ptu/cmd_pos` | `sensor_msgs/JointState` | command_mux | serial_bridge_node | padrão |
-| `/ptu/control_source` | `std_msgs/String` | command_mux | inspection_manager, web | transient_local |
-| `/joint_states` | `sensor_msgs/JointState` | serial_bridge_node | scan_node, web | padrão |
+| `/ptu/control_source` | `std_msgs/String` | command_mux | inspection_manager, calibration_node, web | transient_local |
+| `/joint_states` | `sensor_msgs/JointState` | serial_bridge_node | scan_node, visual_servo_node, calibration_node, web | padrão |
 | `/ptu/errors` | `std_msgs/String` | serial_bridge_node | web | transient_local |
 | `/capture/status` | `pantilt_interfaces/CaptureStatus` | capture_node | web | transient_local |
 
@@ -289,6 +443,8 @@ Convenção do `Twist` para o PTU (mantida do sistema atual): `angular.z` = pan,
 | `/ptu/set_zero` | `std_srvs/Trigger` | web → serial_bridge_node |
 | `/capture/start` | `pantilt_interfaces/StartCapture` | web → capture_node |
 | `/capture/stop` | `std_srvs/Trigger` | web → capture_node |
+| `/calibration/run` | `std_srvs/Trigger` | operador (CLI) → calibration_node |
+| `/calibration/abort` | `std_srvs/Trigger` | operador (CLI) → calibration_node |
 
 ### 5.3 Actions
 
@@ -409,16 +565,18 @@ A telemetria é enviada a 20 Hz. O fail-safe do firmware para os motores após 5
 | `serial_bridge_node` | limites de ângulo por software | comandos fora da faixa física |
 | `command_mux` | watchdog de comando (0,3 s) | nó de controle travado com velocidade não nula |
 | `command_mux` | prioridade do operador | conflito entre modo automático e manual |
+| `visual_servo_node` | aborto por permanência no limite de ângulo | malha empurrando contra o batente indefinidamente |
+| `calibration_node` | aborto se o operador assumir o controle ou se o nó for encerrado (sem novo movimento); retorno ao *home* nas demais saídas; só comandos de posição, nunca velocidade | movimento autônomo inesperado durante a calibração |
 
 ---
 
 ## 10. Métricas de validação (Quadro 3 do TCC)
 
-| Métrica | Origem na arquitetura |
-|---|---|
-| Tempo de convergência *t_c* | `Center.Result.convergence_time_s` (da primeira detecção válida até a estabilização) |
-| Erro residual *e_r* | `Center.Result.final_error_px` |
-| Erro de rastreamento *e_d* | média de `Center.Feedback.error_px` em modo TRACK durante as oscilações (gravar com `ros2 bag record`) |
+| Métrica | Origem na arquitetura | Definição operacional |
+|---|---|---|
+| Tempo de convergência *t_c* | `Center.Result.convergence_time_s` | intervalo entre a **primeira detecção válida** após o início do goal e o instante em que o erro entra na tolerância e nela permanece por `hold_time_s` |
+| Erro residual *e_r* | `Center.Result.final_error_px` | **média** de `error_px` durante esse intervalo de permanência (menos sensível ao tremor da bbox que o último valor) |
+| Erro de rastreamento *e_d* | `Center.Feedback.error_px` (gravar com `ros2 bag record`) | média de `error_px` no feedback, em modo TRACK, durante as oscilações da base |
 
 ---
 
@@ -442,7 +600,7 @@ A ordem prioriza uma fatia vertical funcionando antes dos ensaios:
 2. `pantilt_interfaces` (este commit).
 3. `pantilt_hardware`: migrar o bridge e criar o `command_mux`.
 4. `pantilt_perception` usando o `equipment_coco_test.yaml`.
-5. `visual_servo_node` com PID, testado via `ros2 action send_goal` (já permite medir *t_c* e *e_r*).
+5. `visual_servo_node` com PID, testado via `ros2 action send_goal` (já permite medir *t_c* e *e_r*). Antes dele: `/ptu/cmd_pos_auto` no `command_mux`, `CameraInfo` no `camera_node` e `calibration_node` (seção 4.10), porque a malha depende da distância focal em pixels.
 6. `scan_node` e `inspection_manager`.
 7. Interface web: vídeo, seleção de equipamento e aviso de modo automático.
 8. Controlador fuzzy e comparação com o PID.

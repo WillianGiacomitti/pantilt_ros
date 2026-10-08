@@ -106,3 +106,35 @@ def test_transicoes_de_fonte(arb):
     arb.on_auto(2.0, is_zero=False)
     assert arb.source(2.0) == SOURCE_AUTO
     assert arb.source(2.0 + TIMEOUT + 0.01) == SOURCE_NONE
+
+
+# ---------------- Posição automática (/ptu/cmd_pos_auto) ----------------
+
+def test_posicao_auto_repassada_sem_web(arb):
+    assert arb.on_auto(0.0, is_velocity=False)
+    assert arb.source(0.1) == SOURCE_AUTO
+    assert arb.source(TIMEOUT + 0.01) == SOURCE_NONE
+
+
+def test_posicao_auto_descartada_na_janela_da_web(arb):
+    arb.on_web(0.0, is_velocity=True)
+    assert not arb.on_auto(0.5, is_velocity=False)
+    assert arb.on_auto(HOLD + 0.01, is_velocity=False)
+
+
+def test_posicao_auto_nao_arma_watchdog(arb):
+    arb.on_auto(0.0, is_velocity=False)
+    assert not arb.armed
+    assert arb.check_watchdog(1.0) is None
+
+
+def test_posicao_auto_desarma_velocidade_anterior(arb):
+    arb.on_auto(0.0, is_zero=False)
+    arb.on_auto(0.1, is_velocity=False)   # um zero agora interromperia o movimento
+    assert arb.check_watchdog(1.0) is None
+
+
+def test_posicao_auto_descartada_nao_desarma_watchdog_da_web(arb):
+    arb.on_web(0.0, is_velocity=True, is_zero=False)
+    arb.on_auto(0.1, is_velocity=False)   # descartado
+    assert arb.check_watchdog(TIMEOUT + 0.01) == SOURCE_WEB
