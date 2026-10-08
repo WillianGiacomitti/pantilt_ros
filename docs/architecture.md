@@ -197,7 +197,7 @@ A lei clássica de IBVS, `v_c = −λ·L⁺·e`, é uma ação proporcional apli
 4. **Supervisão.** Avalia três condições de término e calcula as métricas:
    - **centrado:** `error_px ≤ tolerance_px` continuamente por `hold_time_s`;
    - **perdido:** sem alvo (`detected == false` ou sem mensagem) por `lost_timeout_s`;
-   - **preso no limite:** eixo no limite de software do bridge, com comando empurrando para fora, por mais de `limit_timeout_s`.
+   - **preso no limite:** eixo parado em `/joint_states` (menos de 0,2° de deslocamento) com comando de pelo menos 1°/s no mesmo sentido por mais de `limit_timeout_s`. É o que acontece no limite de software do bridge, que zera o eixo que empurra para fora; cobre também o eixo travado. O nó não conhece os limites do bridge. Sem `/joint_states` recente, essa checagem fica desligada (o bridge, sem telemetria, só aceita parar).
 5. **Publicação.** Publica em `/ptu/cmd_vel_auto` a `publish_rate_hz`, repetindo o último comando calculado por até `cmd_hold_s`. Passado esse tempo sem alvo novo, publica zero. Isso desacopla a taxa do detector (~10 Hz) do watchdog de 0,3 s do `command_mux` e evita movimento aos trancos.
 
 #### Semântica da action

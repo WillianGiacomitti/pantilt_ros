@@ -2,8 +2,11 @@
 Camada de controle (docs/architecture.md, seções 4.4 e 4.5).
 
 Sobe os nós do pantilt_control com os parâmetros do params.yaml:
-  - scan_node (varredura em zigue-zague, action /control/scan).
-O visual_servo_node entra aqui quando for implementado.
+  - scan_node (varredura em zigue-zague, action /control/scan);
+  - visual_servo_node (centralização IBVS, action /control/center).
+
+O visual_servo_node precisa de /perception/target e /camera/camera_info:
+suba também o perception.launch.py.
 
 Os comandos saem em /ptu/cmd_vel_auto e só chegam ao pan-tilt pelo
 command_mux: suba também o hardware.launch.py.
@@ -36,6 +39,14 @@ def generate_launch_description():
             package='pantilt_control',
             executable='scan_node',
             name='scan_node',
+            output='screen',
+            parameters=[params_file],
+        ),
+
+        Node(
+            package='pantilt_control',
+            executable='visual_servo_node',
+            name='visual_servo_node',
             output='screen',
             parameters=[params_file],
         ),

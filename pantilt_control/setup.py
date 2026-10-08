@@ -5,7 +5,7 @@ package_name = 'pantilt_control'
 setup(
     name=package_name,
     version='0.1.0',
-    packages=[package_name],
+    packages=[package_name, package_name + '.controllers'],
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'scan_node = pantilt_control.scan_node:main',
+            'visual_servo_node = pantilt_control.visual_servo_node:main',
         ],
     },
 )

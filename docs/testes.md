@@ -16,6 +16,8 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
   - [2.3 calibration_node](#23-calibration_node)
 - [3. pantilt_web](#3-pantilt_web)
 - [4. pantilt_control](#4-pantilt_control)
+  - [4.1 scan_node](#41-scan_node)
+  - [4.2 visual_servo_node](#42-visual_servo_node)
 - [5. pantilt_dataset](#5-pantilt_dataset)
   - [5.1 capture_node](#51-capture_node)
   - [5.2 dataset.launch.py](#52-datasetlaunchpy)
@@ -29,10 +31,10 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 | `pantilt_hardware` | serial, telemetria, limites de ângulo, fail-safe, prioridade e watchdog do mux | sim (o mux pode ser testado sem ela) | não |
 | `pantilt_perception` | `camera_node`: taxa, QoS, perda e retorno da câmera, `camera_info`; `detector_node`: detecções, filtro, alvo, imagem de debug, tempo de inferência; `calibration_node`: `f_x`/`f_y`, recusas e interrupções | só no `calibration_node` | sim (ou um vídeo gravado, exceto no `calibration_node`) |
 | `pantilt_web` | vídeo na página, reconexão, jog com o hardware | só no jog | sim |
-| `pantilt_control` | `scan_node`: varredura, cancelamento, prioridade do operador, abortos | sim | não |
+| `pantilt_control` | `scan_node`: varredura, cancelamento, prioridade do operador, abortos; `visual_servo_node`: sentido de giro, CENTER, TRACK, alvo perdido, limite, métricas | sim (o goal recusado sem calibração dispensa) | só no `visual_servo_node` |
 | `pantilt_dataset` | `capture_node`: MP4 + `.json`, recusas, varredura durante a gravação, disco; `dataset.launch.py` e painel de coleta da página | só com varredura | sim |
 
-Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5). As seções 5.1 a 5.3 foram aprovadas no hardware (29/09 e 02/10/2026). Para validar o `detector_node`, siga 2.2 e depois a seção 3 sem `?video_topic=`.
+Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5); a 4.2 exige também a 2.2 e a calibração da 2.3. As seções 5.1 a 5.3 foram aprovadas no hardware (29/09 e 02/10/2026). Para validar o `detector_node`, siga 2.2 e depois a seção 3 sem `?video_topic=`.
 
 ---
 
@@ -580,6 +582,8 @@ Abra a página: `http://localhost:8080/?video_topic=/camera/image_raw`.
 
 ## 4. pantilt_control
 
+### 4.1 scan_node
+
 **O que valida:** o `scan_node`, servidor da action `/control/scan` (architecture.md §4.4). Ele faz uma varredura em zigue-zague: percorre o pan de uma ponta à outra (±28°) em cada faixa de tilt (-20°, 0°, 20°), um eixo por vez, e publica velocidades em `/ptu/cmd_vel_auto`. Só publica enquanto há um goal ativo.
 
 **Pré-requisitos:** a seção 1.2 passou nos dois eixos, e o mecanismo foi zerado no centro mecânico (`/ptu/set_zero`). Deixe o STOP da página (ou o comando de parada) à mão.
@@ -638,6 +642,74 @@ Para registrar: `ros2 bag record /joint_states /ptu/cmd_vel_auto /ptu/cmd_vel /p
 - Pequenas correções no eixo que não faz parte do trecho (ex.: o tilt se mexendo enquanto o pan varre) são conhecidas: o nó corrige o ruído de leitura desse eixo. As melhorias estão listadas em `docs/diagnostico_encoders.md` §4 e ainda não foram aplicadas.
 - Perto de cada alvo a velocidade cai (até 2°/s); a ultrapassagem deve ficar abaixo de ~1°. Anote se passar disso.
 - A varredura usa ±28° e o bridge limita em ±29°: o log `Limite de ângulo atingido` não deve aparecer. Se aparecer, a ultrapassagem está grande demais.
+
+### 4.2 visual_servo_node
+
+**O que valida:** o `visual_servo_node`, servidor da action `/control/center` (architecture.md §4.5). Ele converte o erro do alvo em ângulo (`θ = atan(e_px / f)`, com `f` do `/camera/camera_info`), passa por um PID por eixo e publica velocidades em `/ptu/cmd_vel_auto` a 20 Hz. No modo CENTER termina ao centralizar; no TRACK segue rastreando até ser cancelado.
+
+**Pré-requisitos:**
+- seção 1.2 aprovada nos dois eixos e mecanismo zerado no centro mecânico;
+- `camera_intrinsics.yaml` presente: o `camera_node` registra `Calibração: fx=...` ao subir (seção 2.3);
+- STOP da página à mão. **O primeiro movimento é com `kp = 0.2`**, porque os sinais (`invert_pan`/`invert_tilt`) ainda não foram fixados (tarefa E).
+
+**Terminais** (cada um com a seção 0 aplicada):
+
+```bash
+ros2 launch pantilt_bringup hardware.launch.py           # 1
+ros2 launch pantilt_bringup perception.launch.py         # 2
+ros2 launch pantilt_web web.launch.py                    # 3 (vídeo, jog e STOP)
+ros2 run pantilt_control visual_servo_node --ros-args \
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml \
+  -p pan.kp:=0.2 -p tilt.kp:=0.2                         # 4
+```
+
+Esperado no log do terminal 4: `Controlador pid | pan kp=0.2 ki=0.0 kd=0.0 | tilt kp=0.2 ... | máx 20.0°/s | invert pan=False tilt=False | 20 Hz`.
+
+**Terminal 5: observação**
+
+```bash
+ros2 topic echo /ptu/cmd_vel_auto --field angular
+ros2 topic echo /ptu/control_source
+```
+
+**Terminal 6: alvo e goals**
+
+```bash
+ros2 service call /perception/set_target pantilt_interfaces/srv/SetTarget "{equipment: 'garrafa'}"
+# CENTER (mode 0) e TRACK (mode 1)
+ros2 action send_goal -f /control/center pantilt_interfaces/action/Center \
+  "{mode: 0, tolerance_px: 20.0, hold_time_s: 1.0, lost_timeout_s: 1.0}"
+ros2 action send_goal -f /control/center pantilt_interfaces/action/Center \
+  "{mode: 1, tolerance_px: 20.0, hold_time_s: 1.0, lost_timeout_s: 1.0}"
+```
+
+O `Ctrl+C` num `send_goal` ainda ativo cancela o goal.
+
+| # | Teste | Comando / ação | Esperado |
+|---|---|---|---|
+| 1 | Sem calibração | `camera_node` sem o arquivo de intrínsecos (ou sem o terminal 2) e goal CENTER | CLI `Goal was rejected.`; log `Goal recusado: sem /camera/camera_info válido ...`; nada se move. Não precisa da ESP32 |
+| 2 | Sentido de giro | `kp = 0.2`; alvo a ~100 px à direita do centro, depois abaixo; goal CENTER | o eixo leva o alvo para o centro. Se afastar, cancele na hora e reinicie o terminal 4 com `-p invert_pan:=true` (ou `invert_tilt`). Pela calibração (pan+ → alvo à esquerda, tilt+ → alvo para baixo), o esperado é `invert_pan=false` e `invert_tilt=true`. Anote o resultado |
+| 3 | CENTER | sinais corrigidos, `kp` do `params.yaml` (0,8); alvo fora do centro; goal CENTER | log `Centralização iniciada (CENTER) \| f_x=... f_y=...`; resultado `success: true`, `message: centralizado em X s, erro residual Y px`, com `convergence_time_s` e `final_error_px` iguais a X e Y; um zero no fim |
+| 4 | TRACK | goal TRACK e mova o alvo devagar | feedback com `centered` alternando conforme o erro; a action continua ativa; Ctrl+C no terminal 6 → CANCELED, `cancelado`, eixos param |
+| 5 | Alvo perdido | goal TRACK e cubra o alvo | em ~1 s: ABORTED, `alvo perdido`; `/ptu/cmd_vel_auto` zera ~0,25 s depois de cobrir |
+| 6 | Goal substituído | goal TRACK e, em outro terminal, um segundo goal TRACK | log `Goal anterior substituído por um novo`; o primeiro termina ABORTED (`substituído por um novo goal`); o rastreamento continua sem parar |
+| 7 | Prioridade do operador | durante o TRACK, segure o jog | fonte `web` na hora e o eixo obedece ao jog; ao soltar, passado ~1 s, a fonte volta a `auto` e o servo retoma, sem abortar |
+| 8 | Preso no limite | goal TRACK e leve o alvo para o lado até o pan parar no limite do bridge (o alvo ainda visível) | log do bridge `Limite de ângulo atingido`; 2 s depois, ABORTED com `pan preso no limite positivo (29.0°): comando empurrando há 2.0 s sem movimento` (ou negativo) |
+| 9 | Ctrl+C no nó | goal TRACK e Ctrl+C no terminal 4 | log `Centralização abortada: nó encerrado`; zero em `/ptu/cmd_vel_auto`; os eixos param |
+| 10 | Goal inválido | `"{mode: 0, tolerance_px: 0.0, hold_time_s: 1.0, lost_timeout_s: 1.0}"` | `Goal was rejected.`; log `Goal recusado: tolerance_px=0.0 deve ser positivo` |
+| 11 | Parâmetro inválido | `ros2 run pantilt_control visual_servo_node --ros-args -p max_vel_deg_s:=40.0` | `[FATAL] Parâmetro inválido: max_vel_deg_s deve estar em (0, 30]°/s, recebido 40.0` e o nó sai |
+
+Para registrar (gráficos do TCC e `e_d`): `ros2 bag record --include-hidden-topics /perception/target /ptu/cmd_vel_auto /joint_states /camera/camera_info /control/center/_action/feedback`.
+
+### Preste atenção
+
+- **Sinal invertido leva o eixo para longe do alvo.** No pan, o aborto por limite vem 2 s depois de o eixo parar no limite do bridge; no tilt (±89°) o eixo anda muito antes disso. Cancele ou use o STOP sem esperar o aborto.
+- **Métricas:** `convergence_time_s` (t_c) vai da primeira detecção válida até o instante em que o erro entrou na tolerância para ficar `hold_time_s`; `final_error_px` (e_r) é a média do erro nessa janela. No TRACK e nos abortos, o resultado traz as métricas da primeira convergência (0 se não houve).
+- **Perda:** o prazo conta do instante de captura do último quadro com alvo; com ~115 ms de atraso do detector, o aborto chega ~0,9 s depois do último alvo recebido.
+- **`f` fixo por goal:** o nó lê `f_x` e `f_y` no início de cada goal. Depois de recalibrar, reinicie o `camera_node` e mande um goal novo.
+- Um aviso `Alvo em WxH, mas o /camera/camera_info é de ...` indica calibração de outra resolução: refaça a 2.3.
+- Sem `/joint_states`, o nó avisa `checagem de limite desligada` e segue; o bridge sem telemetria não deixa os eixos se moverem.
+- Os sinais definitivos e os ganhos vão para o `params.yaml` na tarefa E.
 
 ---
 
@@ -819,5 +891,5 @@ Roteiro curto para gravar o dataset de verdade:
 
 Seções a acrescentar aqui quando os itens existirem:
 
-- `pantilt_control`: `visual_servo_node` (PID e fuzzy);
+- `pantilt_control`: sintonia e ensaios do `visual_servo_node` (tarefa E) e `controllers/fuzzy.py`;
 - `pantilt_manager`: `inspection_manager` e inspeção pela página.

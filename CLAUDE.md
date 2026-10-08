@@ -41,7 +41,7 @@ colcon build --symlink-install && ws
 
 # testes por camada (launch files em pantilt_bringup)
 ros2 launch pantilt_bringup hardware.launch.py      # serial_bridge_node + command_mux
-ros2 launch pantilt_bringup control.launch.py       # scan_node (+ visual_servo_node)
+ros2 launch pantilt_bringup control.launch.py       # scan_node + visual_servo_node
 ros2 launch pantilt_web web.launch.py               # página (8080), rosbridge (9090), web_video_server (8081)
 ros2 launch pantilt_bringup dataset.launch.py       # coleta: câmera + capture_node (+ hardware, controle e web)
 ros2 launch pantilt_bringup perception.launch.py    # camera_node + detector_node (pesos em /ros2_ws/models)
@@ -57,7 +57,8 @@ ros2 interface show pantilt_interfaces/action/Center
 pantilt_interfaces/   msg, srv, action (ament_cmake)
 pantilt_hardware/     serial_bridge_node, command_mux
 pantilt_perception/   camera_node, detector_node, calibration_node
-pantilt_control/      scan_node, visual_servo_node, controllers/{base,pid,fuzzy}.py
+pantilt_control/      scan_node, visual_servo_node, visual_servo_math.py,
+                      controllers/{base,pid,fuzzy}.py
 pantilt_manager/      inspection_manager, state_machine.py
 pantilt_web/          web/index.html + launch (http, rosbridge, web_video_server)
 pantilt_bringup/      launch/, config/{params.yaml, equipment.yaml, equipment_coco_test.yaml,
@@ -81,11 +82,12 @@ docs/                 architecture.md (fonte da verdade), testes.md (roteiros de
 - [x] `pantilt_interfaces`: `StartCapture.srv` e `CaptureStatus.msg`
 - [X] `pantilt_dataset`: `capture_node`
 - [x] `pantilt_web`: painel de coleta de dataset e `dataset.launch.py`: testado no hardware (02/10/2026)
-- [ ] **`pantilt_perception`: `calibration_node` + `CameraInfo` no `camera_node`** (tarefa A, em andamento)
-- [ ] **`pantilt_hardware`: `/ptu/cmd_pos_auto` no `command_mux`** (pré-requisito da tarefa A)
-- [ ] **medir `f_x` e `f_y` no hardware** e conferir contra o FOV (tarefa B)
-- [ ] `pantilt_control`: `controllers/{base,pid}.py` com pytest (tarefa C)
-- [ ] `pantilt_control`: `visual_servo_node` (tarefa D)
+- [x] `pantilt_hardware`: `/ptu/cmd_pos_auto` no `command_mux` (tarefa A)
+- [x] `pantilt_perception`: `CameraInfo` no `camera_node` (tarefa A)
+- [x] `pantilt_perception`: `calibration_node`: rodado no hardware (08/10/2026); valores sob suspeita, ver tarefa B (tarefa A)
+- [ ] **calibração de referência da câmera e conferência dos encoders** (tarefa B, adiada; não bloqueia E)
+- [x] `pantilt_control`: `controllers/{base,pid}.py` com pytest (tarefa C)
+- [x] `pantilt_control`: `visual_servo_node`: testado com planta simulada e no hardware (08/10/2026) (tarefa D)
 - [ ] `pantilt_control`: teste de sinais e sintonia no hardware (tarefa E)
 - [ ] `pantilt_manager`: `inspection_manager`
 - [ ] `pantilt_web`: testar com a inspecao
@@ -126,72 +128,88 @@ Fundamentação completa em `docs/architecture.md` §4.5 e na seção teórica d
 com o `equipment_coco_test.yaml`. Medidas de referência (`docs/testes.md` §2.2): `imgsz` 640 →
 ~10 quadros/s e ~115 ms de atraso; inferência pura 640 = 73 ms, 480 = 46 ms, 320 = 32 ms.
 
-A malha de controle depende da distância focal em pixels, por isso a calibração entra ANTES
-do `visual_servo_node`. As tarefas abaixo são sequenciais; uma por sessão.
+A malha de controle depende da distância focal em pixels, por isso a calibração entrou ANTES
+do `visual_servo_node`. As tarefas abaixo são sequenciais; uma por sessão (C e D foram feitas
+juntas, com o pytest do C como portão antes do nó).
 
-### Tarefa A — `calibration_node` e `CameraInfo` (pré-requisito de tudo)
+### Tarefa A — CONCLUÍDA (08/10/2026)
 
-Especificação: `docs/architecture.md` §4.9 (nó) e §4.1 (publicação do `CameraInfo`).
+`architecture.md` v0.4 (patch de controle aplicado; o `calibration_node` é a §4.10), `/ptu/cmd_pos_auto`
+no `command_mux` (§4.6), `CameraInfo` no `camera_node` (§4.1) e `calibration_node` (§4.10).
+Roteiros em `docs/testes.md` §1.4, §2.1 e §2.3. Lógica pura com pytest em `camera_info_file.py`
+e `calibration_math.py`.
 
-Resumo do fluxo pretendido: o operador centraliza o alvo pela página web e zera os eixos
-(`/ptu/set_zero`); depois chama `/calibration/run`, e o nó percorre sozinho uma grade de
-ângulos em cruz, coleta amostras, ajusta o modelo, grava `config/camera_intrinsics.yaml`
-e volta à posição inicial.
+Decisões tomadas durante a tarefa (já registradas na §4.10, não reabrir):
+- `c_x`, `c_y` fixos no centro geométrico: sob rotação pura o ponto principal não é observável
+  (simulação: ±30 px de incerteza e `f` pior quando livre);
+- ajuste por Levenberg-Marquardt em numpy, sem scipy;
+- o nó publica só posição, nunca velocidade; se o operador assumir ou o nó for encerrado
+  (Ctrl+C), NÃO volta ao *home*; nas demais saídas, volta;
+- arquivo de intrínsecos ausente ou inválido → `CameraInfo` com `K` zerada, imagem continua.
 
-Pré-requisito: `command_mux` precisa aceitar `/ptu/cmd_pos_auto` (§4.6). Faça essa alteração
-primeiro, isolada, e teste que o jog da web continua tendo prioridade.
+### Tarefa B — calibração de referência e conferência dos encoders (ADIADA)
 
-Pontos de atenção:
-- a imagem tem ~115 ms de atraso: descarte as mensagens de `/perception/target` cujo
-  `header.stamp` seja anterior ao fim do movimento, senão a amostra mistura dois ângulos;
-- o service bloqueia por dezenas de segundos: use `ReentrantCallbackGroup` com
-  `MultiThreadedExecutor`, senão as assinaturas param durante a rotina;
-- aborte a rotina se `/ptu/control_source` mudar para `web` (operador assumiu);
-- devolva sempre os eixos à posição inicial, inclusive em caso de erro ou aborto.
+Resultado do `calibration_node` no hardware (08/10/2026), já gravado em
+`config/camera_intrinsics.yaml`: `fx = 859.8` px (RMS 0,50 px), `fy = 991.3` px (RMS 0,90 px);
+pan+ leva o alvo para a esquerda, tilt+ para baixo. Resíduos baixos, mas `fy/fx = 1,15`, e
+uma webcam com pixel quadrado deveria dar `fx ≈ fy`.
 
-### Tarefa B — medição no hardware
+Diagnóstico até aqui:
+- **Paralaxe descartada:** a lente fica 10 mm à frente do eixo do pan (e 120 mm ao lado) e
+  12 mm à frente do eixo do tilt (e 35 mm acima). Só o deslocamento à frente pesa:
+  `f_medido ≈ f·(1 + d/Z)`, ~1% a 1 m;
+- sobram duas suspeitas: **escala errada no encoder de um eixo** (provavelmente o tilt; afetaria
+  também os limites do bridge e a varredura) ou **pixel não quadrado**.
 
-Rodar a calibração, conferir `f_x ≈ (W/2)/tan(FOV_h/2)` e registrar em `docs/testes.md`.
-Resíduo RMS alto é sintoma de encoder ruim ou distorção, não de bug no ajuste.
+Caminho combinado (o autor decide quando):
+1. calibração por tabuleiro de xadrez (OpenCV, script offline, sem dependência nova), em
+   640×480 MJPG como no `camera_node`; o resultado vira o `camera_intrinsics.yaml`;
+2. conferir o encoder do tilt (e do pan) com referência externa (ex.: inclinômetro no celular);
+3. `f_tabuleiro / f_rotação` por eixo mede o erro de escala do encoder: o `calibration_node`
+   passa a servir para conferir o mecanismo;
+4. corrigir a doc: §4.10 (a rotação pura exige o centro óptico no eixo ou `d/Z` pequeno) e
+   `testes.md` §2.3 (hoje sugere alvo a 1–3 m; preferir 2 m ou mais).
 
-### Tarefa C — `controllers/base.py` e `controllers/pid.py`
+C, D e E seguem com os valores atuais: um `f` impreciso só muda o ganho efetivo da malha,
+compensado na sintonia (tarefa E).
 
-Lógica pura, sem ROS, com pytest, como foi feito em `scan_pattern.py`:
-- `base.py`: interface `compute(erro, dt) -> velocidade`, `reset()` e a fábrica
-  `criar_controlador(nome, params)`;
-- `pid.py`: PID posicional com derivada sobre a medida filtrada (1ª ordem),
-  anti-windup por congelamento do integrador na saturação e limite explícito do
-  termo integral;
-- testes: degrau, `dt` variável, saturação, não acumulação do integral saturado,
-  entrada nula após `reset()`.
+### Tarefas C e D — CONCLUÍDAS (08/10/2026)
 
-### Tarefa D — `visual_servo_node`
+`controllers/base.py` (interface `Controlador` + `criar_controlador()`), `controllers/pid.py`,
+`visual_servo_math.py` (conversão, `dt`, `Supervisor` com critérios e métricas) e
+`visual_servo_node.py` (§4.5), com pytest em `test_pid.py` e `test_visual_servo_math.py`.
+Testado com planta simulada (scratchpad) e no hardware. Roteiro em `docs/testes.md` §4.2.
 
-Especificação completa em `docs/architecture.md` §4.5. Pipeline de cinco estágios:
-conversão → controlador → saturação → supervisão → publicação a 20 Hz.
-Reaproveite do `scan_node` o padrão de action server (goal novo substitui o anterior,
-cancelamento, zero ao terminar, `MultiThreadedExecutor` com `spin_once`).
-
-O nó deve rejeitar o goal se ainda não recebeu `/camera/camera_info` válido
-(`f_x > 0`), com mensagem explícita, em vez de assumir um valor.
-
-Teste sem o manager:
-```bash
-ros2 service call /perception/set_target pantilt_interfaces/srv/SetTarget "{equipment: 'garrafa'}"
-ros2 action send_goal -f /control/center pantilt_interfaces/action/Center \
-  "{mode: 0, tolerance_px: 20.0, hold_time_s: 1.0, lost_timeout_s: 1.0}"
-```
+Decisões tomadas durante as tarefas (já registradas na §4.5 ou no código, não reabrir):
+- **preso no limite** = eixo parado em `/joint_states` (< 0,2°) com comando ≥ 1°/s no mesmo
+  sentido por `limit_timeout_s`. O nó não conhece os limites do bridge (§4.5 ajustada);
+  sem `/joint_states` recente, a checagem fica desligada;
+- convenção de sinal: `comando = PID(θ)`, e `invert_*` nega o eixo;
+- integral guardado já como contribuição na saída (rad/s); congela só quando a saída satura e
+  o erro empurra no mesmo sentido (desacumula assim que o erro inverte);
+- derivada do erro filtrado em 1ª ordem (com referência zero, equivale à derivada da medida);
+  a primeira amostra após `reset()` só inicializa o filtro;
+- `dt` pelos `header.stamp` dos alvos válidos; lacuna acima de 0,5 s → `reset()` dos
+  controladores;
+- `f_x`, `f_y` lidos no início de cada goal; `t_c` vai até o início da janela de permanência;
+  o prazo de perda conta da captura do último alvo válido;
+- um feedback por alvo recebido (base do `e_d` no bag); no TRACK e nos abortos, o resultado
+  traz as métricas da primeira convergência (0 se não houve);
+- `max_vel_deg_s` limitado a (0, 30]°/s, o mesmo teto do `scan_node`.
 
 ### Tarefa E — sinais, sintonia e ensaios
 
+Roteiro de base: `docs/testes.md` §4.2.
+
 1. Com `kp = 0.2` e `ki = kd = 0`, verificar o sentido de giro e fixar
-   `invert_pan` / `invert_tilt`. Fazer isso com a mão no botão de parada.
+   `invert_pan` / `invert_tilt` no `params.yaml` (hoje ambos `false`; pela calibração, o
+   esperado é `invert_tilt = true`). Fazer isso com a mão no botão de parada.
 2. Subir `kp` até 0,8–1,0; observar sobressinal e oscilação.
 3. Ativar `ki` só depois, no ensaio com alvo em movimento.
-4. Registrar em `docs/testes.md`: sinais, CENTER, TRACK, alvo perdido, cancelamento,
-   prioridade do operador e comportamento no limite de ângulo.
-5. Gravar `ros2 bag record /perception/target /ptu/cmd_vel_auto /joint_states
-   /camera/camera_info` para os gráficos do TCC.
+4. Registrar em `docs/testes.md` §4.2 os resultados: sinais, CENTER, TRACK, alvo perdido,
+   cancelamento, prioridade do operador e comportamento no limite de ângulo.
+5. Gravar `ros2 bag record --include-hidden-topics /perception/target /ptu/cmd_vel_auto
+   /joint_states /camera/camera_info /control/center/_action/feedback` para os gráficos do TCC.
 
 **Depois disso**, na ordem da §12 do `architecture.md`: `inspection_manager`, teste da
 inspeção pela página, `system.launch.py`, `controllers/fuzzy.py` e scripts de ensaio.
