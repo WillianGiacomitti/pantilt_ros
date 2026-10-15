@@ -25,6 +25,7 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
   - [5.4 Sessão de coleta](#54-sessão-de-coleta)
 - [6. pantilt_manager](#6-pantilt_manager)
   - [6.1 inspection_manager](#61-inspection_manager)
+  - [6.2 system.launch.py](#62-systemlaunchpy)
 - [7. Solução de problemas](#7-solução-de-problemas)
 - [8. Roteiros futuros](#8-roteiros-futuros)
 
@@ -843,7 +844,7 @@ Roteiro curto para gravar o dataset de verdade:
 
 1. `df -h /ros2_ws`: anote o espaço livre. Use o tamanho por minuto medido no teste 3 da seção 5.1 para saber quantos minutos cabem.
 2. Leve o mecanismo ao centro mecânico e zere (`Zerar eixos` na página).
-3. `ros2 launch pantilt_bringup dataset.launch.py`.
+3. `ros2 launch pantilt_bringup dataset.launch.py` (ou, equivalente, `ros2 launch pantilt_bringup system.launch.py mode:=dataset`).
 4. Abra `http://localhost:8080/?tab=coleta`.
 5. Para cada cena (posição do pan-tilt na sala):
    - sessão com o nome da cena e da luz (ex.: `mesa janela tarde`);
@@ -879,7 +880,7 @@ Roteiro curto para gravar o dataset de verdade:
 - uma garrafa no alcance da varredura (pan de −28° a 28°, faixas de tilt −20°, 0° e 20°), fora do centro da imagem;
 - STOP da página à mão. **O STOP e qualquer jog abortam a inspeção** (a fonte vira `web`).
 
-**Terminais** (cada um com a seção 0 aplicada):
+**Terminais** (cada um com a seção 0 aplicada). Os terminais 1 a 5 podem ser trocados por um só, `ros2 launch pantilt_bringup system.launch.py` (seção 6.2); com eles separados, dá para derrubar uma camada sozinha (testes 2, 3, 13 e 14):
 
 ```bash
 ros2 launch pantilt_bringup hardware.launch.py           # 1
@@ -935,6 +936,47 @@ ros2 service call /inspection/stop std_srvs/srv/Trigger
 - O `equipment_file` do gerenciador precisa ser o mesmo do `detector_node`. Uma chave que só um dos dois conhece é recusada com a mensagem do detector.
 - O `error_px` do status vem do feedback da `Center` e é atualizado a 5 Hz.
 - Para os gráficos, acrescente `/inspection/status` ao `ros2 bag record` da seção 4.2.
+
+### 6.2 system.launch.py
+
+**O que valida:** que um único comando sobe o sistema completo (inspeção) ou a coleta de vídeos, e que um único Ctrl+C encerra tudo com os eixos parados.
+
+| Argumento | Padrão | O que faz |
+|---|---|---|
+| `mode` | `inspection` | `inspection`: `hardware.launch.py`, `perception.launch.py`, `control.launch.py`, `inspection_manager` e `web.launch.py`. `dataset`: o `dataset.launch.py` (seção 5.2), sem a YOLO |
+| `hardware` | `true` | bridge e `command_mux`. Na inspeção, o controle sobe mesmo com `false` (os comandos só não chegam ao eixo); na coleta, `false` tira também o `scan_node`, como no `dataset.launch.py` |
+| `web` | `true` | página, rosbridge e web_video_server (portas em `--show-args`) |
+| `params_file` | `config/params.yaml` | arquivo de parâmetros de todos os nós |
+
+```bash
+ros2 launch pantilt_bringup system.launch.py                    # inspeção: http://localhost:8080/
+ros2 launch pantilt_bringup system.launch.py mode:=dataset      # coleta:   http://localhost:8080/?tab=coleta
+```
+
+Os pré-requisitos da inspeção são os da seção 6.1; os da coleta, os da seção 5. Observação e comandos por CLI: terminais 6 e 7 da seção 6.1.
+
+| # | Teste | Comando / ação | Esperado |
+|---|---|---|---|
+| 1 | Argumentos | `ros2 launch pantilt_bringup system.launch.py --show-args` | `params_file`, `mode` (com `Valid choices are: ['inspection', 'dataset']`), `hardware`, `web` e as portas do `web.launch.py` |
+| 2 | Modo inválido | `... mode:=xyz` | `Argument "mode" provided value "xyz" is not valid` e nada sobe |
+| 3 | Inspeção sem ESP32 e sem página | `... hardware:=false web:=false`; `ros2 node list` | log `Sistema em modo inspeção. Página: http://localhost:8080/`; `/camera_node`, `/detector_node`, `/scan_node`, `/visual_servo_node` e `/inspection_manager`; `list_equipment` responde |
+| 4 | Inspeção completa | `ros2 launch pantilt_bringup system.launch.py`; `ros2 node list` | os de cima + `/serial_bridge_node`, `/command_mux`, `/rosbridge_websocket` e `/web_video_server`; logs `Conectado a /dev/ttyUSB0 ...`, `Rosbridge WebSocket server started on port 9090` e `Equipamentos de ...` (gerenciador) |
+| 5 | Início antes do detector | logo depois de subir, start CENTER (página ou CLI) | `accepted: false`, `Indisponível: detector_node ...`; depois de `Equipamentos disponíveis` no log do detector, o mesmo start é aceito |
+| 6 | Inspeção pela página | aba Inspeção, garrafa, CENTER | como o teste 6 da seção 6.1: SEARCHING → CENTERING → IDLE com `Centralizado em X s ...` |
+| 7 | Ctrl+C único na inspeção | em TRACKING, Ctrl+C no terminal do launch | eixos param; o terminal 6 mostra IDLE com `Nó encerrado`; o launch volta ao prompt; a linha `ps aux` da seção 0 não lista nenhum nó |
+| 8 | Coleta | `... mode:=dataset`; `ros2 node list` | log `Sistema em modo coleta. Página: http://localhost:8080/?tab=coleta`; os nós do teste 4 da seção 5.2 (sem `/detector_node`, `/visual_servo_node` e `/inspection_manager`) |
+| 9 | Coleta com varredura e Ctrl+C | página com `?tab=coleta`, Gravar com Varredura; Ctrl+C no meio de uma passada | como o teste 7 da seção 5.2: eixos param; MP4 e `.json` com `end_reason: Nó encerrado` |
+| 10 | Parâmetros próprios | `cp` do `params.yaml` (seção 0) com `output_dir: "/tmp/ds"`; `... mode:=dataset params_file:=/tmp/params_teste.yaml` | log do capture_node `Saída: /tmp/ds` |
+
+No desenvolvimento (15/10/2026, sem ESP32 e com um `.mp4` como câmera), os testes 1 a 3 e 8 passaram, e uma gravação com `mode:=dataset hardware:=false web:=false` foi finalizada pelo Ctrl+C (`end_reason: Nó encerrado`). Os testes 4 a 7, 9 e 10 ficam para o hardware.
+
+### Preste atenção
+
+- **Um launch com câmera por vez.** Não suba o `system.launch.py` junto do `dataset.launch.py`, do `perception.launch.py` ou do `hardware.launch.py`: dois `camera_node` disputam o `/dev/video0` e dois bridges, a serial.
+- **Detector lento para subir:** no volume 9p, o `import` do torch leva de 1 a 2 min com os outros nós subindo junto (65 s sozinho, 118 s no `system`, medidos no desenvolvimento). Até o `Equipamentos disponíveis` no log do detector, o `/inspection/start` é recusado.
+- **Ctrl+C:** alguns nós aparecem como `process has died [... exit code -2 ...]`, com traceback no `destroy_node`. É o segundo SIGINT que o `ros2 launch` repassa durante o encerramento (seção 0). Acontece igual no `perception.launch.py` e no `control.launch.py`. Um Ctrl+C durante a carga do detector leva o launch a escalar para SIGTERM depois de 5 s; espere o detector subir antes de encerrar.
+- **Log misturado:** filtre com `grep`, ex.: `ros2 launch pantilt_bringup system.launch.py 2>&1 | grep -E 'inspection_manager|visual_servo'`.
+- Para reiniciar uma camada sozinha (ex.: a web, teste 15 da seção 5.3), suba com `web:=false` e rode o `web.launch.py` em outro terminal.
 
 ---
 

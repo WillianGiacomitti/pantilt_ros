@@ -14,6 +14,7 @@
   <exec_depend>pantilt_hardware</exec_depend>
   <exec_depend>pantilt_control</exec_depend>
   <exec_depend>pantilt_perception</exec_depend>
+  <exec_depend>pantilt_manager</exec_depend>
   <exec_depend>pantilt_dataset</exec_depend>
   <exec_depend>pantilt_web</exec_depend>
 

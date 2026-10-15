@@ -46,8 +46,11 @@ ros2 launch pantilt_web web.launch.py               # página (8080), rosbridge 
 ros2 launch pantilt_bringup dataset.launch.py       # coleta: câmera + capture_node (+ hardware, controle e web)
 ros2 launch pantilt_bringup perception.launch.py    # camera_node + detector_node (pesos em /ros2_ws/models)
 ros2 run pantilt_manager inspection_manager --ros-args \
-  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml   # gerenciador (ainda sem launch)
-ros2 launch pantilt_bringup system.launch.py        # (a criar)
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml   # gerenciador sozinho
+
+# sistema completo em um comando (docs/testes.md §6.2); hardware:=false, web:=false desligam partes
+ros2 launch pantilt_bringup system.launch.py                 # inspeção: tudo acima + gerenciador
+ros2 launch pantilt_bringup system.launch.py mode:=dataset   # coleta: o mesmo que o dataset.launch.py
 
 # conferir interfaces
 ros2 interface show pantilt_interfaces/action/Center
