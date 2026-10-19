@@ -8,10 +8,10 @@
 equipment:
   amortecedor:
     label: "Amortecedor de vibração"
-    class_name: "amortecedor"
+    class_name: "amortecedor_vibracao"
   esfera:
     label: "Esfera de sinalização"
-    class_name: "esfera"
+    class_name: "esfera_sinalizacao"
   isolador_bastao:
     label: "Isolador bastão"
     class_name: "isolador_bastao"
