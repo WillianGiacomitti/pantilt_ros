@@ -87,7 +87,7 @@ visual_servo_node:
 inspection_manager:
   ros__parameters:
     # equipamentos: deve ser o mesmo equipment_file do detector_node
-    equipment_file: "/ros2_ws/src/pantilt_ros/pantilt_bringup/config/equipment_coco_test.yaml"
+    equipment_file: "/ros2_ws/src/pantilt_ros/pantilt_bringup/config/equipment.yaml"
     confirm_frames: 3              # alvos consecutivos (detected=true) para confirmar a detecção
     scan_timeout_s: 60.0           # tempo máximo da passada de varredura (uma por SEARCHING)
     max_reacquire: 2               # perdas consecutivas do alvo que ainda levam a nova varredura
