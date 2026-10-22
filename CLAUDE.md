@@ -52,6 +52,10 @@ ros2 run pantilt_manager inspection_manager --ros-args \
 ros2 launch pantilt_bringup system.launch.py                 # inspeção: tudo acima + gerenciador
 ros2 launch pantilt_bringup system.launch.py mode:=dataset   # coleta: o mesmo que o dataset.launch.py
 
+# ensaios: o system.launch.py já sobe o experiment_recorder (recorder:=false desliga)
+ros2 service call /experiment/configure pantilt_interfaces/srv/ConfigureExperiment \
+  "{label: 'degrau_kp0.8', notes: '', image_mode: 'none'}"   # gravações em /ros2_ws/ensaios/<rótulo>/
+
 # conferir interfaces
 ros2 interface show pantilt_interfaces/action/Center
 ```
@@ -69,6 +73,7 @@ pantilt_web/          web/index.html + launch (http, rosbridge, web_video_server
 pantilt_bringup/      launch/, config/{params.yaml, equipment.yaml, equipment_coco_test.yaml,
                       camera_intrinsics.yaml}
 pantilt_dataset/      capture_node (ferramenta auxiliar: vídeos para o dataset)
+pantilt_experiment/   experiment_recorder, session.py, csv_writer.py (ensaios do TCC: CSV + JSON por inspeção)
 docs/                 architecture.md (fonte da verdade), testes.md (roteiros de teste por pacote),
                       ajustes_pantilt_dockerfile.md, diagnostico_encoders.md (histórico),
                       SerialProtocol.h (cópia do protocolo do firmware)
@@ -98,6 +103,12 @@ docs/                 architecture.md (fonte da verdade), testes.md (roteiros de
 - [x] `pantilt_web`: testar com a inspecao
 - [x] `pantilt_bringup`: launch files e config (feitos: `hardware.launch.py`, `control.launch.py`, `dataset.launch.py`, `perception.launch.py`; falta `system`)
 - [ ] `pantilt_control`: `controllers/fuzzy.py` (depois; a interface já deve estar pronta)
+- [x] ensaios, etapa 0: contrato na `architecture.md` v0.6 (§4.11, §10)
+- [x] ensaios, etapa 1: `ServoDebug`/`DetectionTiming` + termos P/I/D no `pid.py`: testado com planta simulada (22/10/2026); falta o hardware (`docs/testes.md` §7.1)
+- [x] ensaios, etapa 2: `pantilt_experiment` com o `experiment_recorder`: testado com planta simulada (22/10/2026); falta o hardware (`docs/testes.md` §7.2)
+- [ ] ensaios, etapa 3: imagens (snapshots e vídeo)
+- [ ] ensaios, etapa 4: bloco Ensaio na aba Inspeção da página
+- [ ] ensaios, etapa 5: `analisar_ensaios.py` (métricas e gráficos)
 
 Atualize esta lista ao concluir cada item (o autor confirma).
 
@@ -214,8 +225,8 @@ Roteiro de base: `docs/testes.md` §4.2.
 3. Ativar `ki` só depois, no ensaio com alvo em movimento.
 4. Registrar em `docs/testes.md` §4.2 os resultados: sinais, CENTER, TRACK, alvo perdido,
    cancelamento, prioridade do operador e comportamento no limite de ângulo.
-5. Gravar `ros2 bag record --include-hidden-topics /perception/target /ptu/cmd_vel_auto
-   /joint_states /camera/camera_info /control/center/_action/feedback` para os gráficos do TCC.
+5. Gravar os ensaios com o `experiment_recorder` (um rótulo por configuração de ganhos,
+   `docs/testes.md` §7.2) para os gráficos do TCC.
 
 A tarefa E está **em espera**: o autor sintoniza quando o sistema completo estiver funcionando.
 Até lá, os demais itens usam os ganhos atuais do `params.yaml`.

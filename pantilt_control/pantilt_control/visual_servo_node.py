@@ -12,6 +12,7 @@ Tópicos:
   assina   /camera/camera_info  (sensor_msgs/CameraInfo)           - f_x e f_y em px
   assina   /joint_states        (sensor_msgs/JointState)           - pan_joint e tilt_joint (rad)
   publica  /ptu/cmd_vel_auto    (geometry_msgs/Twist)              - angular.z = pan, angular.y = tilt (rad/s)
+  publica  /control/servo_debug (pantilt_interfaces/ServoDebug)    - sinais internos, um por alvo (publish_debug)
 
 Pipeline (um ciclo por alvo novo, publicação a publish_rate_hz):
   1. conversão: θ = atan(error_px / f), com f_x e f_y fixados no início do goal;
@@ -31,7 +32,8 @@ Comportamento:
     responder, em qualquer término (inclusive o nó encerrado);
   - MODE_CENTER termina ao centralizar; MODE_TRACK continua ativo com
     feedback centered=true até ser cancelado, perder o alvo ou prender;
-  - um feedback por alvo recebido (é dele que sai o e_d, via ros2 bag).
+  - um feedback por alvo recebido (é dele que sai o e_d) e, com
+    publish_debug, um ServoDebug junto, com θ, termos do controlador e comando.
 
 O command_mux continua aplicando a prioridade do operador e o watchdog.
 
@@ -58,7 +60,7 @@ from pantilt_control.visual_servo_math import (
     Supervisor, calcular_dt, px_para_angulo, saturar,
 )
 from pantilt_interfaces.action import Center
-from pantilt_interfaces.msg import VisualTarget
+from pantilt_interfaces.msg import ServoDebug, VisualTarget
 
 # Idade máxima da última posição recebida em /joint_states
 JOINT_STATES_TIMEOUT_S = 0.5
@@ -101,6 +103,7 @@ class VisualServoNode(Node):
         self.declare_parameter('publish_rate_hz', 20.0)
         self.declare_parameter('cmd_hold_s', 0.25)
         self.declare_parameter('limit_timeout_s', 2.0)
+        self.declare_parameter('publish_debug', True)
 
         p = lambda nome: self.get_parameter(nome).value  # noqa: E731
         self.controller = p('controller')
@@ -145,6 +148,9 @@ class VisualServoNode(Node):
         )
 
         self.cmd_pub = self.create_publisher(Twist, '/ptu/cmd_vel_auto', 10)
+        self.debug_pub = None
+        if p('publish_debug'):
+            self.debug_pub = self.create_publisher(ServoDebug, '/control/servo_debug', 10)
         self.create_subscription(VisualTarget, '/perception/target', self.on_target, 10)
         self.create_subscription(JointState, '/joint_states', self.on_joint_states, 10)
         self.create_subscription(
@@ -304,6 +310,7 @@ class VisualServoNode(Node):
                 seq_visto = seq
                 t = _segundos(alvo.header.stamp)
                 error_px = math.hypot(alvo.error_x, alvo.error_y)
+                debug = ServoDebug()
                 if alvo.detected:
                     if (alvo.image_width, alvo.image_height) != (largura, altura):
                         self.get_logger().warn(
@@ -315,13 +322,17 @@ class VisualServoNode(Node):
                     if lacuna:
                         for controlador in self.controladores.values():
                             controlador.reset()
-                    comando = self._calcular_comando(alvo, f_x, f_y, dt)
+                    comando = self._calcular_comando(alvo, f_x, f_y, dt, debug)
                     comando_t = time.monotonic()
+                    debug.dt = dt
+                    debug.gap_reset = lacuna
                 sup.alvo(t, alvo.detected, error_px)
                 goal_handle.publish_feedback(Center.Feedback(
                     error_x=alvo.error_x, error_y=alvo.error_y,
                     error_px=error_px if alvo.detected else 0.0,
                     target_visible=alvo.detected, centered=sup.centrado))
+                if self.debug_pub is not None:
+                    self._publish_debug(debug, alvo, goal.mode, error_px, sup)
 
             # Estágio 5: repete o último comando por até cmd_hold_s
             if time.monotonic() - comando_t <= self.cmd_hold_s:
@@ -362,18 +373,53 @@ class VisualServoNode(Node):
                 delay = 0.0
             self._stop_event.wait(delay)
 
-    def _calcular_comando(self, alvo: VisualTarget, f_x: float, f_y: float, dt: float):
-        """Estágios 1 a 3 para um alvo válido: retorna (pan, tilt) em graus/s."""
+    def _calcular_comando(self, alvo: VisualTarget, f_x: float, f_y: float, dt: float,
+                          debug: ServoDebug):
+        """
+        Estágios 1 a 3 para um alvo válido: retorna (pan, tilt) em graus/s.
+        Preenche em debug os ângulos, os termos dos controladores e o comando.
+        """
         theta_pan = px_para_angulo(alvo.error_x, f_x)
         theta_tilt = px_para_angulo(alvo.error_y, f_y)
         limite = math.radians(self.max_vel_deg_s)
-        pan = saturar(self.controladores['pan'].compute(theta_pan, dt), limite)
-        tilt = saturar(self.controladores['tilt'].compute(theta_tilt, dt), limite)
+        c_pan, c_tilt = self.controladores['pan'], self.controladores['tilt']
+        pan_bruto = c_pan.compute(theta_pan, dt)
+        tilt_bruto = c_tilt.compute(theta_tilt, dt)
+        pan = saturar(pan_bruto, limite)
+        tilt = saturar(tilt_bruto, limite)
         if self.invert_pan:
             pan = -pan
         if self.invert_tilt:
             tilt = -tilt
+
+        debug.theta_pan = theta_pan
+        debug.theta_tilt = theta_tilt
+        debug.p_pan, debug.i_pan, debug.d_pan = c_pan.termos()
+        debug.p_tilt, debug.i_tilt, debug.d_tilt = c_tilt.termos()
+        # Controlador sem saída bruta própria (nan): vale a saída dele
+        u_pan, u_tilt = c_pan.saida_bruta(), c_tilt.saida_bruta()
+        debug.u_raw_pan = pan_bruto if math.isnan(u_pan) else u_pan
+        debug.u_raw_tilt = tilt_bruto if math.isnan(u_tilt) else u_tilt
+        debug.saturated_pan = bool(c_pan.saturado)
+        debug.saturated_tilt = bool(c_tilt.saturado)
+        debug.cmd_pan = pan
+        debug.cmd_tilt = tilt
         return math.degrees(pan), math.degrees(tilt)
+
+    def _publish_debug(self, debug: ServoDebug, alvo: VisualTarget, mode: int,
+                       error_px: float, sup: Supervisor):
+        """Completa o ServoDebug do alvo (entrada e supervisão) e publica."""
+        debug.header = alvo.header
+        debug.controller = self.controller
+        debug.mode = mode
+        debug.target_visible = alvo.detected
+        debug.error_x = alvo.error_x
+        debug.error_y = alvo.error_y
+        debug.error_px = error_px if alvo.detected else 0.0
+        debug.centered = sup.centrado
+        debug.convergence_time_s = float(sup.t_c)
+        debug.final_error_px = float(sup.e_r)
+        self.debug_pub.publish(debug)
 
     def _result(self, sup: Supervisor, success: bool, message: str):
         # Métricas da primeira convergência (0 se não houve)

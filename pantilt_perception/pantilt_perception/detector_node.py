@@ -8,6 +8,7 @@ Tópicos:
   publica  /perception/detections   (vision_msgs/Detection2DArray)   - a cada quadro processado
   publica  /perception/target       (pantilt_interfaces/VisualTarget) - só com filtro ativo
   publica  /perception/debug_image  (sensor_msgs/Image)              - só com assinante
+  publica  /perception/timing       (pantilt_interfaces/DetectionTiming) - por quadro (publish_timing)
 
 Service:
   /perception/set_target  (pantilt_interfaces/SetTarget) - define o filtro; "" remove
@@ -47,7 +48,7 @@ from rclpy.time import Time
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 
-from pantilt_interfaces.msg import VisualTarget
+from pantilt_interfaces.msg import DetectionTiming, VisualTarget
 from pantilt_interfaces.srv import SetTarget
 from pantilt_perception.detection import (
     Detection, load_equipment, match_equipment, select_target, target_error, validate_params,
@@ -85,6 +86,7 @@ class DetectorNode(Node):
         self.declare_parameter('imgsz', 640)
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('publish_debug_image', True)
+        self.declare_parameter('publish_timing', True)
 
         self.model_path = self.get_parameter('model_path').value
         self.equipment_file = self.get_parameter('equipment_file').value
@@ -128,6 +130,9 @@ class DetectorNode(Node):
         if self.publish_debug:
             self.debug_pub = self.create_publisher(
                 Image, '/perception/debug_image', qos_profile_sensor_data)
+        self.timing_pub = None
+        if self.get_parameter('publish_timing').value:
+            self.timing_pub = self.create_publisher(DetectionTiming, '/perception/timing', 10)
         self.create_service(SetTarget, '/perception/set_target', self.on_set_target)
 
         self._reset_stats()
@@ -210,6 +215,13 @@ class DetectorNode(Node):
             self._publish_debug(frame, msg.header, detections, target, infer_ms)
 
         latency = self.get_clock().now() - Time.from_msg(msg.header.stamp)
+        if self.timing_pub is not None:
+            timing = DetectionTiming()
+            timing.header = msg.header
+            timing.inference_ms = infer_ms
+            timing.latency_ms = latency.nanoseconds / 1e6
+            timing.n_detections = len(detections)
+            self.timing_pub.publish(timing)
         self.stats_frames += 1
         self.stats_infer_ms += infer_ms
         self.stats_latency_s += latency.nanoseconds / 1e9

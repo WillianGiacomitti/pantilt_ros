@@ -11,6 +11,7 @@ Trocar de método é só mudar o parâmetro `controller`: o nó cria os
 controladores por criar_controlador() e não conhece as classes concretas.
 """
 
+import math
 from abc import ABC, abstractmethod
 
 CONTROLADORES = ('pid', 'fuzzy')
@@ -32,6 +33,18 @@ class Controlador(ABC):
     @abstractmethod
     def reset(self):
         """Volta ao estado inicial (goal novo ou alvo reencontrado após lacuna)."""
+
+    # Diagnóstico para o /control/servo_debug (ensaios). Valem para a última
+    # chamada de compute(); os padrões servem a controladores sem P/I/D.
+    saturado = False
+
+    def termos(self) -> tuple:
+        """(p, i, d) em rad/s. Padrão: zeros."""
+        return 0.0, 0.0, 0.0
+
+    def saida_bruta(self) -> float:
+        """Saída antes da saturação, em rad/s. Padrão: nan (não informada)."""
+        return math.nan
 
 
 def criar_controlador(nome: str, params: dict) -> Controlador:

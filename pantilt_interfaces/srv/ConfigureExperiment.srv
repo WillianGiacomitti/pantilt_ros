@@ -1,0 +1,10 @@
+# Configura as proximas gravacoes do experiment_recorder (docs/architecture.md,
+# secao 4.11). Recusado durante uma gravacao.
+
+string label               # rotulo do ensaio (ex.: "degrau_kp0.8"); vazio = default_label
+string notes               # observacao livre, gravada no resumo.json
+string image_mode          # none, snapshots ou video
+---
+bool success
+string message
+uint32 next_repetition     # numero da proxima gravacao com este rotulo

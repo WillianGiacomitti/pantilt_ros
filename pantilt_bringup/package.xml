@@ -16,6 +16,7 @@
   <exec_depend>pantilt_perception</exec_depend>
   <exec_depend>pantilt_manager</exec_depend>
   <exec_depend>pantilt_dataset</exec_depend>
+  <exec_depend>pantilt_experiment</exec_depend>
   <exec_depend>pantilt_web</exec_depend>
 
   <export>

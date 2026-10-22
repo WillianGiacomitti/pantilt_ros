@@ -8,6 +8,8 @@ Dois modos, escolhidos pelo argumento mode:
     - perception.launch.py (camera_node + detector_node);
     - control.launch.py (scan_node + visual_servo_node);
     - inspection_manager (pantilt_manager);
+    - experiment_recorder (pantilt_experiment), se recorder:=true: grava cada
+      inspeção em /ros2_ws/ensaios (docs/architecture.md, seção 4.11);
     - web.launch.py do pantilt_web, se web:=true.
     Página: http://localhost:8080/
 
@@ -24,6 +26,7 @@ Uso:
   ros2 launch pantilt_bringup system.launch.py
   ros2 launch pantilt_bringup system.launch.py mode:=dataset
   ros2 launch pantilt_bringup system.launch.py hardware:=false web:=false
+  ros2 launch pantilt_bringup system.launch.py recorder:=false
   ros2 launch pantilt_bringup system.launch.py params_file:=/caminho/params.yaml
 
 Não suba junto com outro launch que tenha câmera (dataset.launch.py,
@@ -50,6 +53,7 @@ def generate_launch_description():
     params_file = LaunchConfiguration('params_file')
     hardware = LaunchConfiguration('hardware')
     web = LaunchConfiguration('web')
+    recorder = LaunchConfiguration('recorder')
 
     def include(path, arguments=None, condition=None):
         return IncludeLaunchDescription(
@@ -77,6 +81,8 @@ def generate_launch_description():
         DeclareLaunchArgument('web', default_value='true',
                               description='Sobe o web.launch.py (página, rosbridge e '
                                           'web_video_server)'),
+        DeclareLaunchArgument('recorder', default_value='true',
+                              description='Sobe o experiment_recorder (só no modo inspection)'),
 
         LogInfo(condition=inspection,
                 msg='Sistema em modo inspeção. Página: http://localhost:8080/'),
@@ -94,6 +100,15 @@ def generate_launch_description():
                 name='inspection_manager',
                 output='screen',
                 parameters=[params_file],
+            ),
+
+            Node(
+                package='pantilt_experiment',
+                executable='experiment_recorder',
+                name='experiment_recorder',
+                output='screen',
+                parameters=[params_file],
+                condition=IfCondition(recorder),
             ),
 
             include(os.path.join(web_dir, 'launch', 'web.launch.py'),

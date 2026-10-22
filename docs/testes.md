@@ -26,8 +26,11 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 - [6. pantilt_manager](#6-pantilt_manager)
   - [6.1 inspection_manager](#61-inspection_manager)
   - [6.2 system.launch.py](#62-systemlaunchpy)
-- [7. Solução de problemas](#7-solução-de-problemas)
-- [8. Roteiros futuros](#8-roteiros-futuros)
+- [7. pantilt_experiment](#7-pantilt_experiment)
+  - [7.1 Sinais de diagnóstico (etapa 1)](#71-sinais-de-diagnóstico-etapa-1)
+  - [7.2 experiment_recorder (etapa 2)](#72-experiment_recorder-etapa-2)
+- [8. Solução de problemas](#8-solução-de-problemas)
+- [9. Roteiros futuros](#9-roteiros-futuros)
 
 | Pacote | O que valida | ESP32 | Câmera |
 |---|---|---|---|
@@ -37,8 +40,9 @@ Roteiros manuais para validar cada pacote com o hardware real: comandos para exe
 | `pantilt_control` | `scan_node`: varredura, cancelamento, prioridade do operador, abortos; `visual_servo_node`: sentido de giro, CENTER, TRACK, alvo perdido, limite, métricas | sim (o goal recusado sem calibração dispensa) | só no `visual_servo_node` |
 | `pantilt_dataset` | `capture_node`: MP4 + `.json`, recusas, varredura durante a gravação, disco; `dataset.launch.py` e painel de coleta da página | só com varredura | sim |
 | `pantilt_manager` | `inspection_manager`: recusas do início, varredura, confirmação, centralização, readquisição, operador, stop e encerramento | sim | sim |
+| `pantilt_experiment` | sinais de diagnóstico do servo e do detector; `experiment_recorder`: pastas por inspeção, CSVs, `resumo.json`, rótulo e repetição, recusas | sim (só os testes automáticos dispensam) | sim |
 
-Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5); a 4.2 exige também a 2.2 e a calibração da 2.3. As seções 5.1 a 5.3 foram aprovadas no hardware (29/09 e 02/10/2026). Para validar o `detector_node`, siga 2.2 e depois a seção 3 sem `?video_topic=`. A seção 6 exige a 2.2, a 2.3 e os sinais da 4.2.
+Ordem recomendada na primeira vez: 1.1 → 1.2 → 1.3 → 1.4 → 4 → 5. A seção 1.2 é pré-requisito de qualquer teste em malha fechada (seções 4 e 5); a 4.2 exige também a 2.2 e a calibração da 2.3. As seções 5.1 a 5.3 foram aprovadas no hardware (29/09 e 02/10/2026). Para validar o `detector_node`, siga 2.2 e depois a seção 3 sem `?video_topic=`. A seção 6 exige a 2.2, a 2.3 e os sinais da 4.2. A seção 7 exige a 6.1.
 
 ---
 
@@ -300,7 +304,7 @@ Se aparecer `A fonte entrega WxH em vez de 640x480`, a câmera não aceitou a re
 
 ```bash
 ros2 param dump /camera_node                # confere que o params.yaml foi lido
-ros2 topic hz /camera/image_raw             # ~19-30 Hz conforme a luz; ~7 Hz indica problema de transporte (seção 7)
+ros2 topic hz /camera/image_raw             # ~19-30 Hz conforme a luz; ~7 Hz indica problema de transporte (seção 8)
 ros2 topic info -v /camera/image_raw        # publisher camera_node: Reliability BEST_EFFORT
 ros2 topic echo /camera/image_raw --field header   # stamp avançando e frame_id camera_optical_frame
 ros2 topic hz /camera/camera_info           # mesma taxa da imagem
@@ -578,7 +582,7 @@ Abra a página: `http://localhost:8080/?video_topic=/camera/image_raw`.
 
 ### Preste atenção
 
-- Se a assinatura do `web_video_server` aparecer como **RELIABLE**, o stream foi aberto sem `qos_profile=sensor_data` e não recebe quadros (seção 7).
+- Se a assinatura do `web_video_server` aparecer como **RELIABLE**, o stream foi aberto sem `qos_profile=sensor_data` e não recebe quadros (seção 8).
 - Anote o sentido da imagem em cada eixo nos testes 5 e 7. É isso que define o sinal do erro do `visual_servo_node` (`invert_pan`/`invert_tilt`).
 - Com o sistema todo rodando, `df -h /dev/shm` deve mostrar algumas dezenas de MB usados, longe de 1 GB.
 
@@ -703,7 +707,7 @@ O `Ctrl+C` num `send_goal` ainda ativo cancela o goal.
 | 10 | Goal inválido | `"{mode: 0, tolerance_px: 0.0, hold_time_s: 1.0, lost_timeout_s: 1.0}"` | `Goal was rejected.`; log `Goal recusado: tolerance_px=0.0 deve ser positivo` |
 | 11 | Parâmetro inválido | `ros2 run pantilt_control visual_servo_node --ros-args -p max_vel_deg_s:=40.0` | `[FATAL] Parâmetro inválido: max_vel_deg_s deve estar em (0, 30]°/s, recebido 40.0` e o nó sai |
 
-Para registrar (gráficos do TCC e `e_d`): `ros2 bag record --include-hidden-topics /perception/target /ptu/cmd_vel_auto /joint_states /camera/camera_info /control/center/_action/feedback`.
+Para registrar (gráficos do TCC e `e_d`): o `experiment_recorder` grava cada goal numa pasta própria, com os sinais internos da malha (seção 7.2). Alternativa crua: `ros2 bag record --include-hidden-topics /perception/target /ptu/cmd_vel_auto /joint_states /camera/camera_info /control/center/_action/feedback /control/servo_debug`.
 
 ### Preste atenção
 
@@ -935,7 +939,7 @@ ros2 service call /inspection/stop std_srvs/srv/Trigger
 - **Uma passada por varredura:** a SEARCHING termina ao fim do padrão do `scan_node`, mesmo antes de `scan_timeout_s`.
 - O `equipment_file` do gerenciador precisa ser o mesmo do `detector_node`. Uma chave que só um dos dois conhece é recusada com a mensagem do detector.
 - O `error_px` do status vem do feedback da `Center` e é atualizado a 5 Hz.
-- Para os gráficos, acrescente `/inspection/status` ao `ros2 bag record` da seção 4.2.
+- Para os gráficos, use o `experiment_recorder` (seção 7.2): uma pasta por inspeção, com os eventos do `/inspection/status`.
 
 ### 6.2 system.launch.py
 
@@ -980,7 +984,161 @@ No desenvolvimento (15/10/2026, sem ESP32 e com um `.mp4` como câmera), os test
 
 ---
 
-## 7. Solução de problemas
+## 7. pantilt_experiment
+
+Aquisição de dados para os ensaios do TCC (architecture.md §4.11). Foi feita em etapas, e cada uma tem o seu roteiro. Se algo quebrar, refaça na ordem: cada seção pressupõe as anteriores.
+
+| Etapa | O que entrou | Roteiro |
+|---|---|---|
+| 1 | interfaces novas, `/control/servo_debug` (θ, P/I/D, saturação, comando) e `/perception/timing` (inferência e atraso por quadro) | 7.1 |
+| 2 | `experiment_recorder`: uma pasta por inspeção ou goal `Center` direto, com CSVs e `resumo.json` | 7.2 |
+| 3 | imagens: snapshots ou vídeo | (futuro, seção 9) |
+| 4 | bloco Ensaio na aba Inspeção da página | (futuro, seção 9) |
+| 5 | `analisar_ensaios.py`: métricas e gráficos | (futuro, seção 9) |
+
+### 7.1 Sinais de diagnóstico (etapa 1)
+
+**O que valida:** as interfaces novas do `pantilt_interfaces`, o `/control/servo_debug` do `visual_servo_node` (architecture.md §4.5, "Diagnóstico") e o `/perception/timing` do `detector_node` (§4.2). Nenhum comportamento da malha muda: os testes da seção 4.2 continuam valendo.
+
+**Pré-requisitos:** seções 2.2, 2.3 e 4.2 aprovadas (detector, calibração e sinais do servo). O teste 1 e o 2 dispensam hardware e câmera.
+
+**Build e testes automáticos (terminal 1):**
+
+```bash
+cd /ros2_ws && colcon build --symlink-install \
+  --packages-select pantilt_interfaces pantilt_control pantilt_perception && ws
+ros2 interface show pantilt_interfaces/msg/ServoDebug
+ros2 interface show pantilt_interfaces/msg/DetectionTiming
+cd /ros2_ws/src/pantilt_ros/pantilt_control && python3 -m pytest -q test && cd /ros2_ws
+```
+
+**Terminais** (cada um com a seção 0 aplicada). O servo fica num terminal próprio para os testes 9 e 10 o reiniciarem com outro parâmetro:
+
+```bash
+ros2 launch pantilt_bringup hardware.launch.py           # 2
+ros2 launch pantilt_bringup perception.launch.py         # 3
+ros2 launch pantilt_web web.launch.py                    # 4 (vídeo, jog e STOP)
+ros2 run pantilt_control visual_servo_node --ros-args \
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml   # 5
+ros2 topic echo /control/servo_debug                     # 6
+ros2 topic echo /perception/timing                       # 7
+```
+
+**Terminal 8: comandos.** Use uma chave do `equipment_file` em uso (`ros2 service call /inspection/list_equipment pantilt_interfaces/srv/ListEquipment`); abaixo, `garrafa`.
+
+```bash
+ros2 service call /perception/set_target pantilt_interfaces/srv/SetTarget "{equipment: 'garrafa'}"
+ros2 action send_goal -f /control/center pantilt_interfaces/action/Center \
+  "{mode: 0, tolerance_px: 20.0, hold_time_s: 1.0, lost_timeout_s: 1.0}"
+ros2 action send_goal -f /control/center pantilt_interfaces/action/Center \
+  "{mode: 1, tolerance_px: 20.0, hold_time_s: 1.0, lost_timeout_s: 1.0}"
+```
+
+| # | Teste | Comando / ação | Esperado |
+|---|---|---|---|
+| 1 | Interfaces | `ros2 interface show` (terminal 1), também para `msg/ExperimentStatus` e `srv/ConfigureExperiment` | campos como na architecture.md §4.5 e §4.11 |
+| 2 | pytest | terminal 1 | todos passam, inclusive `test_termos_somam_a_saida_bruta`, `test_saida_bruta_acima_da_saturacao`, `test_reset_zera_termos` e `test_padroes_da_interface` |
+| 3 | Taxa do timing | `ros2 topic hz /perception/timing`, sem filtro e sem inspeção | a taxa do detector (~10 Hz a `imgsz` 640), mesmo sem filtro |
+| 4 | Valores do timing | terminal 7 | `inference_ms` ~70–95 e `latency_ms` ~110–120 (as médias do log de 10 s do detector); `n_detections` = caixas na cena |
+| 5 | Sem goal | `ros2 topic hz /control/servo_debug` | nada publicado |
+| 6 | CENTER | `set_target` e goal CENTER com a garrafa fora do centro | uma mensagem por alvo (~10 Hz) com `controller: pid` e `mode: 0`. Com `ki = kd = 0`: `i_*` e `d_*` zerados, `p_pan` = `kp · theta_pan`, `u_raw_pan` = `p_pan + i_pan + d_pan`, `theta_pan` ≈ `atan(error_x / f_x)`. Sem saturação: `cmd_pan` = `u_raw_pan` e `cmd_tilt` = −`u_raw_tilt` (`invert_tilt: true`) |
+| 7 | Métricas | fim do goal do teste 6 | a última mensagem tem `centered: true`, e `convergence_time_s` e `final_error_px` iguais aos do resultado da action |
+| 8 | Alvo coberto | goal TRACK e cubra a garrafa | `target_visible: false`, `error_px: 0.0`, ângulos, termos e `cmd_*` zerados, até o aborto por `alvo perdido` |
+| 9 | Saturação | reinicie o terminal 5 com `-p max_vel_deg_s:=2.0` no fim; goal CENTER com a garrafa longe do centro | `saturated_pan: true` enquanto \|`u_raw_pan`\| > 0,0349 rad/s (2°/s), com `cmd_pan` preso em ±0,0349 |
+| 10 | Diagnóstico desligado | reinicie o terminal 5 com `-p publish_debug:=false`; goal CENTER | nada em `/control/servo_debug`; a centralização funciona igual |
+| 11 | Timing desligado | troque o terminal 3 por `ros2 run pantilt_perception camera_node` e `ros2 run pantilt_perception detector_node`, ambos com `--ros-args --params-file .../params.yaml`, e o detector com `-p publish_timing:=false` | `ros2 topic info /perception/timing` mostra `Publisher count: 0`; o log de 10 s continua |
+
+**Preste atenção:**
+
+- O `/control/servo_debug` só sai com goal `Center` ativo e só quando chega um alvo novo (taxa do detector, não os 20 Hz do comando). O comando de fato enviado continua em `/ptu/cmd_vel_auto`.
+- `u_raw_*` é a saída **antes** da saturação e **sem** o `invert_*`; `cmd_*` é depois dos dois. Por isso o sinal de `cmd_tilt` é o oposto de `u_raw_tilt` com `invert_tilt: true`.
+- `dt` é 0 na primeira amostra do goal e depois de uma lacuna (`gap_reset: true`, alvo sumido por mais de 0,5 s).
+- O `latency_ms` usa o relógio do host contra o `header.stamp` da imagem, o mesmo cálculo das médias do log.
+
+### 7.2 experiment_recorder (etapa 2)
+
+**O que valida:** o `experiment_recorder` (architecture.md §4.11): abre uma pasta quando a inspeção sai do IDLE ou quando chega um goal `Center` direto, grava os sinais em CSV, fecha depois da cauda com o `resumo.json` e renomeia a pasta com o equipamento e o modo.
+
+**Pré-requisitos:** seções 6.1 (inspeção completa) e 7.1 aprovadas. Os testes 1 e 16 dispensam hardware e câmera; os demais precisam do sistema de inspeção funcionando.
+
+**Build e testes automáticos (terminal 1):**
+
+```bash
+cd /ros2_ws && colcon build --symlink-install \
+  --packages-select pantilt_interfaces pantilt_experiment pantilt_bringup && ws
+cd /ros2_ws/src/pantilt_ros/pantilt_experiment && python3 -m pytest -q test && cd /ros2_ws
+```
+
+**Terminais** (cada um com a seção 0 aplicada). O `system.launch.py` já sobe o gravador; aqui ele fica num terminal próprio para os testes de Ctrl+C:
+
+```bash
+ros2 launch pantilt_bringup system.launch.py recorder:=false   # 2
+ros2 run pantilt_experiment experiment_recorder --ros-args \
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml   # 3
+```
+
+Esperado no log do terminal 3: `Saída: /ros2_ws/ensaios | rótulo "sem_rotulo" (próxima #001) | imagens: none | pré 1.0 s, cauda 1.0 s | mínimo 1.0 GB livres | commit 1a2b3c4d`.
+
+**Terminal 4: observação**
+
+```bash
+ros2 topic echo /experiment/status
+```
+
+**Terminal 5: comandos.** Troque `garrafa` por uma chave do `equipment_file` em uso.
+
+```bash
+ros2 service call /experiment/configure pantilt_interfaces/srv/ConfigureExperiment \
+  "{label: 'teste_gravador', notes: 'roteiro 7.2', image_mode: 'none'}"
+ros2 service call /inspection/start pantilt_interfaces/srv/StartInspection "{equipment: 'garrafa', mode: 0}"
+ros2 service call /inspection/start pantilt_interfaces/srv/StartInspection "{equipment: 'garrafa', mode: 1}"
+ros2 service call /inspection/stop std_srvs/srv/Trigger
+# goal direto (gerenciador em IDLE)
+ros2 service call /perception/set_target pantilt_interfaces/srv/SetTarget "{equipment: 'garrafa'}"
+ros2 action send_goal /control/center pantilt_interfaces/action/Center \
+  "{mode: 0, tolerance_px: 20.0, hold_time_s: 1.0, lost_timeout_s: 1.0}"
+# última pasta gravada
+U=$(ls -td /ros2_ws/ensaios/teste_gravador/*/ | head -1); echo $U; ls $U
+python3 -m json.tool $U/resumo.json | less
+cat $U/events.csv
+```
+
+| # | Teste | Comando / ação | Esperado |
+|---|---|---|---|
+| 1 | pytest | terminal 1 | todos passam (`test_session.py` e `test_csv_writer.py`) |
+| 2 | Configuração | `configure` com `teste_gravador` | `success: true`, `Próxima gravação: teste_gravador #001 \| imagens: none \| obs.: roteiro 7.2`; status com `label: teste_gravador`, `repetition: 1`, `recording: false` |
+| 3 | Inspeção CENTER | start CENTER | status `recording: true`, `Gravando inspeção: teste_gravador #001`; ao voltar ao IDLE, `(cauda)` por ~1 s e então `Gravado: teste_gravador/001_AAAAMMDD_HHMMSS_garrafa_center (centralizado, X s)`. Log do terminal 3 com `Gravação iniciada (inspeção): ...` e `Gravado: ...` |
+| 4 | Arquivos | `ls $U` | `target.csv`, `detections.csv`, `timing.csv`, `servo.csv`, `center_feedback.csv`, `scan_feedback.csv`, `joints.csv`, `cmd_auto.csv`, `cmd_mux.csv`, `events.csv` e `resumo.json`. `cmd_mux.csv` só aparece com o hardware (o `command_mux`) de pé |
+| 5 | Resumo | `json.tool` | `desfecho: centralizado`; `center[0]` com `status: sucesso`, `success: true` e `convergence_time_s`/`final_error_px` iguais à mensagem final; `scan[0]` com `status: cancelado`; `parametros` com os 4 nós (nenhum `ausente`), `pan.kp` igual ao `params.yaml`; `camera` com o `fx`/`fy` do `camera_intrinsics.yaml`; `commit.branch` igual à branch atual; `linhas_descartadas: 0` |
+| 6 | Eventos | `cat $U/events.csv` | na ordem: `gravador,inicio` → `inspecao,SEARCHING` → `scan,goal_ativo` → `inspecao,CENTERING` → `center,goal_ativo` → `scan,goal_fim ... cancelado` → `center,goal_fim ... sucesso` → `inspecao,IDLE` → `gravador,fim`, com o fim ~1 s (`tail_s`) depois do IDLE |
+| 7 | Pré-gravação | `head -3 $U/joints.csv` | primeiras linhas com `t` negativo (até −1 s, `pre_s`) |
+| 8 | Repetição | start CENTER de novo | pasta `002_...`; status do repouso com `repetition: 3` |
+| 9 | TRACK com perda | start TRACK; em TRACKING, cubra a garrafa ~2 s e descubra; depois `stop` | pasta `..._garrafa_track`; `desfecho: rastreou`, `readquisicoes: 1`; dois goals em `center`: o primeiro `abortado` com `alvo perdido`, o segundo `cancelado` |
+| 10 | Sem alvo | tire a garrafa de cena; start CENTER | pasta `..._garrafa_nd`; `desfecho: sem_alvo`, `mensagem_final: Alvo não encontrado (varredura completa)`; sem `servo.csv` nem `center_feedback.csv`; `scan[0]` com `completed: true` |
+| 11 | Goal direto | gerenciador em IDLE, `set_target` e `send_goal` CENTER | status `Gravando goal Center direto: ...`; `resumo.json` com `origem: direto`, `readquisicoes: null`, `desfecho: centralizado` (ou `falhou`, se a garrafa estiver fora da imagem: `mensagem_final: alvo perdido`) |
+| 12 | Configuração recusada | `configure` durante uma inspeção | `success: false`, `Gravação em andamento (teste_gravador #NNN): configure depois do fim` |
+| 13 | Modo de imagem | `configure` com `image_mode: 'snapshots'` | `success: false`, `image_mode="snapshots" ainda não implementado (disponível: none)` (até a etapa 3) |
+| 14 | Operador assume | durante a inspeção, um jog | IDLE `Inspeção abortada pelo operador`; a pasta fecha ~1 s depois; `events.csv` com `mux,fonte,web` |
+| 15 | Ctrl+C no gravador | durante uma inspeção, Ctrl+C no terminal 3 | log `Gravado: ... (interrompido, X s)`; `resumo.json` com `desfecho: interrompido` e `motivo_interrupcao: nó encerrado`; a inspeção continua normalmente |
+| 16 | Parâmetro inválido | `ros2 run pantilt_experiment experiment_recorder --ros-args -p image_mode:=foto` | `[FATAL] Parâmetro inválido: image_mode="foto" desconhecido (opções: none, snapshots, video)` e o nó sai |
+| 17 | Pouco disco | terminal 3 com `-p min_free_gb:=100000.0`; start CENTER | log `Gravação não iniciada: pouco espaço em disco: X GB livres (mínimo 100000.0 GB)`; a inspeção segue sem gravar |
+| 18 | Gravador sobe no meio | terminal 3 parado; start TRACK; em TRACKING, suba o terminal 3 | a gravação abre na hora (o `/inspection/status` é transient_local) e fecha no IDLE |
+| 19 | Leitura no Python | `python3 -c "import numpy as np; d = np.genfromtxt('$U/servo.csv', delimiter=',', names=True, dtype=None, encoding='utf-8'); print(d['t'][:3], d['error_px'][:3])"` | três tempos crescentes e os erros em px |
+
+**Preste atenção:**
+
+- Durante a gravação a pasta se chama `NNN_AAAAMMDD_HHMMSS`; o equipamento e o modo entram no nome só ao fechar.
+- **Rótulo:** vale para todas as gravações seguintes, até outro `configure`. Reiniciar o nó volta ao `default_label` (`sem_rotulo`); a numeração continua da maior pasta existente no rótulo.
+- **Modo `nd`:** nenhum goal `Center` chegou a rodar (ex.: alvo não encontrado) ou o servo está com `publish_debug: false`.
+- **`ausente` em `parametros`:** o nó não estava no ar (ou tem outro nome) quando a gravação abriu.
+- **Tempo:** `t` é o instante da captura (o `header.stamp`) e `t_rx` o de chegada ao gravador. Para alvo, servo e detector, use `t`; para `cmd_*`, `center_feedback` e `scan_feedback` (sem header), `t = t_rx`. O `JointState` é carimbado pelo bridge na chegada da serial.
+- O `commit` é lido quando o nó sobe: depois de mudar de branch ou de commitar, reinicie o gravador. `alteracoes_locais: true` indica arquivos versionados modificados sem commit.
+- Tamanho típico: ~100 KB por 15 s de inspeção.
+- `/ros2_ws/ensaios` fica fora do git e aparece no Windows na pasta do volume.
+
+---
+
+## 8. Solução de problemas
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
@@ -1006,9 +1164,12 @@ No desenvolvimento (15/10/2026, sem ESP32 e com um `.mp4` como câmera), os test
 
 ---
 
-## 8. Roteiros futuros
+## 9. Roteiros futuros
 
 Seções a acrescentar aqui quando os itens existirem:
 
 - `pantilt_control`: sintonia e ensaios do `visual_servo_node` (tarefa E) e `controllers/fuzzy.py`;
-- `pantilt_web`: inspeção pela página (aba Inspeção com o `inspection_manager`).
+- `pantilt_web`: inspeção pela página (aba Inspeção com o `inspection_manager`);
+- `pantilt_experiment`, etapa 3: imagens do `experiment_recorder` (snapshots e vídeo, custo no detector pelo `timing.csv`);
+- `pantilt_experiment`, etapa 4: bloco Ensaio na aba Inspeção (`/experiment/configure` e `/experiment/status` pela página);
+- `pantilt_experiment`, etapa 5: `analisar_ensaios.py` (métricas da architecture.md §10 e gráficos).

@@ -6,7 +6,8 @@ Este documento é a **fonte da verdade** para nomes de nós, tópicos, services,
 
 - **Autor:** Willian Luiz Giacomitti
 - **Orientador:** Prof. Dr. Ronnier Frates Rohrich
-- **Versão do documento:** 0.5 (08/10/2026): comportamento do `inspection_manager` detalhado (recusas do início, confirmação do alvo, uma passada de varredura, readquisição por perdas consecutivas, status)
+- **Versão do documento:** 0.6 (22/10/2026): aquisição de dados dos ensaios (novo `experiment_recorder` no pacote `pantilt_experiment`, `/control/servo_debug` no `visual_servo_node`, `/perception/timing` no `detector_node`, métricas ampliadas na seção 10)
+  - 0.5 (08/10/2026): comportamento do `inspection_manager` detalhado (recusas do início, confirmação do alvo, uma passada de varredura, readquisição por perdas consecutivas, status)
   - 0.4 (08/10/2026): camada de controle e calibração (`CameraInfo` no `camera_node`, especificação completa do `visual_servo_node`, `/ptu/cmd_pos_auto` no `command_mux`, novo `calibration_node`, métricas precisadas)
   - 0.3 (02/10/2026): comportamento do `detector_node` detalhado (alvo só com filtro, quadros descartados, pesos locais) e `ListEquipment` lido só do yaml
 - **Plataforma:** ROS 2 Humble · Python (rclpy) · Docker em Windows/WSL2
@@ -89,8 +90,11 @@ Camadas e pacotes:
 | Operador | `pantilt_web` | `index.html` + rosbridge + web_video_server |
 | Integração | `pantilt_bringup` | launch files e configuração |
 | Ferramenta auxiliar | `pantilt_dataset` | `capture_node` (coleta de vídeos para o dataset) |
+| Ensaios | `pantilt_experiment` | `experiment_recorder` (registro de cada inspeção) + script de análise |
 
 O `pantilt_dataset` não faz parte do fluxo de inspeção. Ele serve para gravar os vídeos que formam o dataset de treino da YOLO, usando a câmera e a varredura do sistema (seção 4.9).
+
+O `pantilt_experiment` também fica fora do fluxo: só observa os tópicos e grava cada inspeção numa pasta própria para os ensaios do TCC (seção 4.11). Nenhum nó depende dele.
 
 O `calibration_node` também fica fora do fluxo de inspeção: é uma rotina chamada pelo operador para estimar a distância focal em pixels, de que o `visual_servo_node` depende (seção 4.10).
 
@@ -134,6 +138,7 @@ Executa a YOLO (Ultralytics), aplica o filtro de classe e seleciona o alvo.
 - **Quadros:** processa sempre o quadro mais recente (assinatura com fila de 1). Os quadros que chegam durante uma inferência são descartados, para não acumular atraso na malha IBVS.
 - **Header:** todas as saídas usam o header da imagem de origem (instante da captura). O `visual_servo_node` calcula o `dt` por esses timestamps.
 - **Imagem de debug:** só é desenhada quando `/perception/debug_image` tem assinante (ex.: a página aberta).
+- **Tempos por quadro:** com `publish_timing=true`, publica em `/perception/timing` (`DetectionTiming`) um registro por quadro processado: tempo de inferência, atraso desde a captura e número de detecções após o filtro. O log continua com as médias a cada 10 s.
 - **Pesos:** o nó não baixa pesos. Se `model_path` não existir, encerra com erro e indica o comando de download. Os pesos ficam em `/ros2_ws/models/`, fora do git.
 
 | Parâmetro | Padrão | Descrição |
@@ -144,6 +149,7 @@ Executa a YOLO (Ultralytics), aplica o filtro de classe e seleciona o alvo.
 | `imgsz` | 640 | Tamanho de inferência |
 | `device` | `cpu` | `cpu` ou `cuda:0` |
 | `publish_debug_image` | true | Publica a imagem com bboxes para a web |
+| `publish_timing` | true | Publica `/perception/timing` |
 
 ### 4.3 `inspection_manager` (pantilt_manager)
 
@@ -238,6 +244,19 @@ Em qualquer término, o nó publica velocidade zero antes de responder.
 | `publish_rate_hz` | 20.0 | Hz | estágio 5 |
 | `cmd_hold_s` | 0.25 | s | repetição do último comando |
 | `limit_timeout_s` | 2.0 | s | tempo preso no limite antes de abortar |
+| `publish_debug` | true | — | publica `/control/servo_debug` |
+
+#### Diagnóstico (`/control/servo_debug`)
+
+Para os ensaios, o nó expõe os sinais internos da malha em `/control/servo_debug` (`ServoDebug`). Uma mensagem por alvo recebido durante um goal ativo (a mesma cadência do feedback, ~10 Hz), com o `header` do alvo (instante da captura):
+
+- entrada: `error_x`, `error_y`, `error_px` (px), `target_visible`, e os ângulos `theta_pan`, `theta_tilt` (rad) do estágio 1;
+- controlador: `dt`, `gap_reset` (controladores reiniciados por lacuna), e por eixo os termos `p`, `i`, `d`, a soma antes da saturação `u_raw` e o indicador `saturated` (rad/s);
+- saída: `cmd_pan`, `cmd_tilt` (rad/s), o comando calculado após a saturação e os `invert_*`. É o valor que passa a ser repetido no estágio 5; o que de fato sai, a 20 Hz, continua em `/ptu/cmd_vel_auto`;
+- supervisão: `centered`, `convergence_time_s` e `final_error_px` (métricas da primeira convergência, 0 se ainda não houve);
+- contexto: `controller` e `mode` do goal.
+
+Com `target_visible=false` o controlador não roda: os campos do controlador e do comando vêm zerados. Controladores sem a decomposição P/I/D (o fuzzy) publicam os termos zerados e só a saída em `u_raw`. Para isso a interface `Controlador` ganha, para a última chamada de `compute()`, o método `termos() -> (p, i, d)` (padrão `(0, 0, 0)`), o método `saida_bruta()` (saída antes da saturação; padrão `nan`, e aí o nó usa a própria saída) e o atributo `saturado` (padrão `False`).
 
 #### Organização do código
 
@@ -307,6 +326,8 @@ A página `index.html` é servida por HTTP e se comunica via rosbridge (roslib.j
 A web usa services mais o tópico de status, e não actions diretamente, porque o suporte a actions do ROS 2 no rosbridge/roslibjs do Humble é limitado.
 
 A página também tem um painel de coleta de dataset (seção 4.9), que usa os services `/capture/*` e o tópico `/capture/status`.
+
+Na aba Inspeção, um bloco **Ensaio** configura o `experiment_recorder` (seção 4.11) pelo `/experiment/configure` (rótulo, observação e modo de imagem) e mostra pelo `/experiment/status` se a inspeção está sendo gravada, com o rótulo e o número da repetição.
 
 ### 4.9 `capture_node` (pantilt_dataset)
 
@@ -415,6 +436,102 @@ Falhando qualquer uma, o service retorna `success=false` com a razão. O nó **n
 
 A calibração por tabuleiro de xadrez (OpenCV) continua sendo o método de referência e permanece como script offline, não como nó. Ela é obrigatória se a OAK-D entrar no projeto ou se a distorção se mostrar relevante.
 
+### 4.11 `experiment_recorder` (pantilt_experiment)
+
+Grava os dados de cada inspeção numa pasta própria, para os ensaios do TCC (seção 10). É só observador: assina tópicos, consulta resultados de actions e parâmetros, e nunca comanda nada. Substitui o `ros2 bag record` manual, que mistura inspeções num mesmo arquivo e não separa os ensaios.
+
+#### Gatilhos
+
+Uma **gravação** é uma inspeção ou um goal `Center` direto:
+
+- **Inspeção:** abre quando `/inspection/status` sai do IDLE e fecha quando ele volta ao IDLE. Os goals `Scan` e `Center` enviados durante a inspeção pertencem a ela, inclusive os das readquisições.
+- **Goal `Center` direto** (ex.: `ros2 action send_goal` nos ensaios de degrau): abre quando surge um goal ativo em `/control/center/_action/status` com o gerenciador em IDLE, e fecha quando esse goal chega a um estado final.
+- **Cauda:** depois do fim, continua gravando por `tail_s` para registrar o assentamento. Se outra gravação começar durante a cauda, a atual fecha na hora.
+- **Pré-gravação:** um buffer circular de `pre_s` com todos os tópicos numéricos entra no início da gravação (posição inicial das juntas, alvo antes do goal).
+- **Goals `Scan` sem inspeção** (ex.: do `capture_node`) não abrem gravação.
+
+#### Rótulo e repetição
+
+O `/experiment/configure` define o **rótulo** do ensaio (ex.: `degrau_kp0.8`), uma observação livre e o modo de imagem. O rótulo é limpo para `[a-z0-9_.-]`; vazio vale `default_label`. A configuração é recusada durante uma gravação e vale para todas as gravações seguintes, até ser trocada. A repetição é numerada sozinha: `NNN` = maior número já existente na pasta do rótulo + 1.
+
+#### Pasta de uma gravação
+
+`<output_dir>/<rótulo>/<NNN>_<AAAAMMDD_HHMMSS>_<equipamento>_<modo>/`, em que `modo` é `center`, `track` ou `nd` (nenhum goal `Center` chegou a rodar, ex.: alvo não encontrado). O modo vem do `mode` do `/control/servo_debug`; sem ele (`publish_debug=false`), vale `track` se o gerenciador passou por TRACKING, e `nd` nos demais casos. O equipamento e o modo só são conhecidos durante a gravação, então a pasta é criada como `<NNN>_<AAAAMMDD_HHMMSS>` e renomeada ao fechar. Num goal direto, o equipamento é o do `/perception/target` recebido, ou `direto` se não houver filtro.
+
+| Arquivo | Origem | Conteúdo |
+|---|---|---|
+| `target.csv` | `/perception/target` | todos os campos do `VisualTarget` |
+| `detections.csv` | `/perception/detections` | uma linha por caixa: classe, confiança, centro e tamanho |
+| `timing.csv` | `/perception/timing` | inferência, atraso e número de detecções por quadro |
+| `servo.csv` | `/control/servo_debug` | todos os campos do `ServoDebug` |
+| `center_feedback.csv` | `/control/center/_action/feedback` | feedback da `Center` |
+| `scan_feedback.csv` | `/control/scan/_action/feedback` | feedback da `Scan` |
+| `joints.csv` | `/joint_states` | posição (rad) e velocidade (rad/s) de pan e tilt |
+| `cmd_auto.csv` | `/ptu/cmd_vel_auto` | comando automático (pan, tilt em rad/s) |
+| `cmd_mux.csv` | `/ptu/cmd_vel` | comando que de fato chega ao bridge |
+| `events.csv` | vários | transições de estado (com a mensagem), goals aceitos e finalizados, mudanças de `/ptu/control_source`, `/ptu/errors`, snapshots |
+| `resumo.json` | — | ver abaixo |
+| `*.jpg`, `video.mp4`, `video_frames.csv` | `/perception/debug_image` | conforme o modo de imagem |
+
+**Tempo nos CSVs:** toda linha tem `t` (o `header.stamp` da mensagem; para mensagens sem header, igual a `t_rx`) e `t_rx` (instante de recepção no `experiment_recorder`), em segundos relativos ao início da gravação. O instante absoluto do início fica no `resumo.json`. As linhas da pré-gravação têm tempo negativo. Os `Twist` não têm header, e o `JointState` é carimbado pelo bridge na recepção da serial (não na ESP32): `t_rx` é a melhor referência para eles.
+
+**Formato dos CSVs:** cabeçalho na primeira linha, separador vírgula, booleanos como `1`/`0` e números reais com 9 algarismos significativos (legível pelo `numpy.genfromtxt(..., delimiter=',', names=True)`). Os tempos são arredondados a 0,1 ms.
+
+**`resumo.json`:** rótulo, repetição, observação, equipamento, modo, modo de imagem, início e fim (absolutos), duração, desfecho com a última mensagem do `/inspection/status` (inspeção) ou do resultado da `Center` (goal direto), lista de goals `Center` e `Scan` com instantes e resultado completo, número de readquisições, `f_x` e `f_y` do `/camera/camera_info`, parâmetros de `visual_servo_node`, `inspection_manager`, `detector_node` e `scan_node` lidos no início (services `list_parameters`/`get_parameters` de cada nó; nó fora do ar fica registrado como ausente), o commit do `pantilt_ros` (hash, branch e se havia alterações locais em arquivos versionados; lido quando o nó sobe), o número de linhas de cada CSV e as linhas descartadas por fila cheia.
+
+**Desfecho**, na ordem de prioridade:
+
+| Desfecho | Quando |
+|---|---|
+| `interrompido` | nó encerrado (Ctrl+C) ou pouco espaço em disco durante a gravação |
+| `centralizado` | algum goal `Center` terminou com sucesso (modo CENTER) |
+| `rastreou` | modo TRACK e algum feedback com `centered=true` |
+| `sem_alvo` | inspeção sem nenhum goal `Center` (alvo não encontrado na varredura) |
+| `falhou` | os demais casos (alvo perdido sem readquirir, preso no limite, cancelado antes de centralizar...) |
+
+**Resultado das actions:** o resultado não é publicado em tópico. Ao ver um goal chegar a estado final em `/control/center/_action/status` ou `/control/scan/_action/status`, o nó chama o service oculto `get_result` da action com o `goal_id`. Isso vale tanto para os goals do gerenciador quanto para os diretos.
+
+#### Imagens (`image_mode`)
+
+| Modo | Conteúdo | Custo |
+|---|---|---|
+| `none` | nenhuma imagem | zero: o nó não assina a imagem |
+| `snapshots` | JPEG do último quadro de `/perception/debug_image` na entrada em CENTERING (ou no início de um goal direto), no primeiro `centered=true` e no fim | o detector desenha a imagem de debug durante a gravação |
+| `video` | `video.mp4` com `/perception/debug_image` e `video_frames.csv` (índice do quadro × `header.stamp`, porque a taxa do detector varia) | idem, mais a codificação, numa thread própria (o `VideoRecorder` do `pantilt_dataset`) |
+
+A assinatura da imagem só existe durante a gravação, porque o `detector_node` só desenha a imagem de debug quando há assinante (seção 4.2). Com a página aberta, ele já desenha de qualquer forma. O `timing.csv` mostra se o modo escolhido derrubou a taxa do detector.
+
+#### Interface
+
+- `/experiment/configure` (`ConfigureExperiment`): `label`, `notes`, `image_mode` → `success`, `message`, `next_repetition`. Um `image_mode` vazio mantém o atual. Recusado durante uma gravação (inclusive na cauda) e com modo de imagem desconhecido.
+- `/experiment/status` (`ExperimentStatus`, transient_local, 2 Hz e a cada mudança): `recording`, `label`, `repetition` (da gravação atual ou a próxima), `notes`, `image_mode`, `folder` (a atual ou a última), `elapsed_s`, `message`.
+
+#### Comportamento
+
+- A escrita dos arquivos roda numa thread própria, com fila: os callbacks nunca esperam o disco.
+- Espaço livre em `output_dir` abaixo de `min_free_gb`: não abre a gravação (aviso no log e no status); durante uma gravação, fecha a atual.
+- Encerramento (Ctrl+C) no meio de uma gravação: fecha a pasta com desfecho `interrompido`.
+- Um CSV sem nenhuma linha não é criado.
+
+| Parâmetro | Padrão | Descrição |
+|---|---|---|
+| `output_dir` | `/ros2_ws/ensaios` | Pasta raiz (fora do `src/` e do git; visível no Windows) |
+| `default_label` | `sem_rotulo` | Rótulo até o primeiro `/experiment/configure` |
+| `image_mode` | `none` | Modo de imagem inicial: `none`, `snapshots` ou `video` |
+| `pre_s` | 1.0 | Pré-gravação |
+| `tail_s` | 1.0 | Cauda depois do fim |
+| `min_free_gb` | 1.0 | Espaço livre mínimo |
+| `jpeg_quality` | 85 | Qualidade dos snapshots |
+| `video_fps` | 10.0 | Taxa declarada no MP4 (a real fica no `video_frames.csv`) |
+| `fourcc` | `mp4v` | Codec do vídeo |
+| `queue_size` | 2000 | Fila do escritor de CSV (linhas) |
+| `param_nodes` | `[visual_servo_node, inspection_manager, detector_node, scan_node]` | Nós cujos parâmetros vão para o `resumo.json` |
+| `repo_dir` | `/ros2_ws/src/pantilt_ros` | Repositório do commit registrado |
+
+#### Análise
+
+`pantilt_experiment/scripts/analisar_ensaios.py` (numpy e matplotlib, sem pandas) lê as pastas e gera em `<output_dir>/_analise/`: `metricas.csv` (uma linha por gravação, com as métricas da seção 10), `resumo_por_rotulo.csv` (média, desvio padrão, mínimo, máximo e taxa de sucesso por rótulo) e as figuras por gravação e comparativas entre rótulos (PNG e PDF).
+
 ---
 
 ## 5. Contratos de comunicação
@@ -427,8 +544,11 @@ A calibração por tabuleiro de xadrez (OpenCV) continua sendo o método de refe
 | `/camera/camera_info` | `sensor_msgs/CameraInfo` | camera_node | visual_servo_node, calibration_node | sensor data (igual ao da imagem) |
 | `/perception/detections` | `vision_msgs/Detection2DArray` | detector_node | web, rosbag | padrão |
 | `/perception/debug_image` | `sensor_msgs/Image` | detector_node | web_video_server | sensor data |
-| `/perception/target` | `pantilt_interfaces/VisualTarget` | detector_node | inspection_manager, visual_servo_node, calibration_node | padrão (depth 1) |
-| `/inspection/status` | `pantilt_interfaces/InspectionStatus` | inspection_manager | web | transient_local |
+| `/perception/target` | `pantilt_interfaces/VisualTarget` | detector_node | inspection_manager, visual_servo_node, calibration_node, experiment_recorder | padrão (depth 1) |
+| `/perception/timing` | `pantilt_interfaces/DetectionTiming` | detector_node | experiment_recorder | padrão |
+| `/inspection/status` | `pantilt_interfaces/InspectionStatus` | inspection_manager | web, experiment_recorder | transient_local |
+| `/control/servo_debug` | `pantilt_interfaces/ServoDebug` | visual_servo_node | experiment_recorder | padrão |
+| `/experiment/status` | `pantilt_interfaces/ExperimentStatus` | experiment_recorder | web | transient_local |
 | `/ptu/cmd_vel_auto` | `geometry_msgs/Twist` | scan_node, visual_servo_node | command_mux | padrão |
 | `/ptu/cmd_vel_web` | `geometry_msgs/Twist` | web | command_mux | padrão |
 | `/ptu/cmd_pos_web` | `sensor_msgs/JointState` | web | command_mux | padrão |
@@ -441,6 +561,8 @@ A calibração por tabuleiro de xadrez (OpenCV) continua sendo o método de refe
 | `/capture/status` | `pantilt_interfaces/CaptureStatus` | capture_node | web | transient_local |
 
 Convenção do `Twist` para o PTU (mantida do sistema atual): `angular.z` = pan, `angular.y` = tilt, em rad/s. Juntas em `JointState`: `pan_joint` e `tilt_joint`, em rad.
+
+O `experiment_recorder` assina também, só para gravar, `/perception/detections`, `/perception/debug_image` (modos `snapshots` e `video`), `/camera/camera_info`, `/joint_states`, `/ptu/cmd_vel_auto`, `/ptu/cmd_vel`, `/ptu/control_source`, `/ptu/errors` e os tópicos ocultos `status` e `feedback` das actions `/control/scan` e `/control/center`.
 
 ### 5.2 Services
 
@@ -455,6 +577,7 @@ Convenção do `Twist` para o PTU (mantida do sistema atual): `angular.z` = pan,
 | `/capture/stop` | `std_srvs/Trigger` | web → capture_node |
 | `/calibration/run` | `std_srvs/Trigger` | operador (CLI) → calibration_node |
 | `/calibration/abort` | `std_srvs/Trigger` | operador (CLI) → calibration_node |
+| `/experiment/configure` | `pantilt_interfaces/ConfigureExperiment` | web, operador (CLI) → experiment_recorder |
 
 ### 5.3 Actions
 
@@ -462,6 +585,8 @@ Convenção do `Twist` para o PTU (mantida do sistema atual): `angular.z` = pan,
 |---|---|---|
 | `/control/scan` | `pantilt_interfaces/Scan` | inspection_manager, capture_node → scan_node |
 | `/control/center` | `pantilt_interfaces/Center` | inspection_manager → visual_servo_node |
+
+O `experiment_recorder` não é cliente das actions: só chama o service oculto `get_result` delas para gravar o resultado dos goals (seção 4.11).
 
 As definições completas estão em `pantilt_interfaces/msg`, `srv` e `action`.
 
@@ -588,7 +713,22 @@ A telemetria é enviada a 20 Hz. O fail-safe do firmware para os motores após 5
 |---|---|---|
 | Tempo de convergência *t_c* | `Center.Result.convergence_time_s` | intervalo entre a **primeira detecção válida** após o início do goal e o instante em que o erro entra na tolerância e nela permanece por `hold_time_s` |
 | Erro residual *e_r* | `Center.Result.final_error_px` | **média** de `error_px` durante esse intervalo de permanência (menos sensível ao tremor da bbox que o último valor) |
-| Erro de rastreamento *e_d* | `Center.Feedback.error_px` (gravar com `ros2 bag record`) | média de `error_px` no feedback, em modo TRACK, durante as oscilações da base |
+| Erro de rastreamento *e_d* | `center_feedback.csv` (`Center.Feedback.error_px`) | média de `error_px` no feedback, em modo TRACK, durante as oscilações da base: do primeiro `centered=true` ao fim do goal, só com `target_visible=true` |
+
+Métricas complementares, calculadas pelo `analisar_ensaios.py` a partir das pastas do `experiment_recorder` (seção 4.11):
+
+| Métrica | Origem | Definição operacional |
+|---|---|---|
+| Sobressinal *M_p* (por eixo) | `servo.csv` (`theta_*`) | maior `\|θ\|` depois do primeiro cruzamento de zero (troca de sinal em relação ao erro inicial), em graus e em % do `\|θ\|` inicial; 0 se não houve cruzamento |
+| IAE | `servo.csv` (`error_px`) | integral de `\|error_px\|` no tempo (regra do trapézio sobre o `header.stamp`), da primeira detecção válida do goal até o início da janela de permanência (CENTER) ou até o fim (TRACK), em px·s |
+| Tempo de busca *t_b* | `events.csv` | do início da inspeção (saída do IDLE) à primeira entrada em CENTERING |
+| Tempo total *t_i* | `events.csv` + `servo.csv` | do início da inspeção ao primeiro `centered=true` |
+| Readquisições | `events.csv` | entradas em CENTERING menos 1 |
+| Sucesso | `resumo.json` | desfecho `centralizado` (CENTER) ou `rastreou` (TRACK, chegou a `centered=true`) |
+| Saturação | `servo.csv` | % das amostras com `saturated` em algum eixo |
+| Desempenho do detector | `timing.csv` | taxa (inverso do intervalo médio entre `header.stamp`), inferência e atraso médios e percentil 95 |
+
+---
 
 ---
 
@@ -616,7 +756,7 @@ A ordem prioriza uma fatia vertical funcionando antes dos ensaios:
 6. `scan_node` e `inspection_manager`.
 7. Interface web: vídeo, seleção de equipamento e aviso de modo automático.
 8. Controlador fuzzy e comparação com o PID.
-9. Scripts de ensaio (rosbag e extração de métricas).
+9. Ensaios (seção 4.11), em etapas: interfaces e sinais de diagnóstico (`/control/servo_debug`, `/perception/timing`); `experiment_recorder` com CSV e JSON; imagens (snapshots ou vídeo); bloco Ensaio na web; script de análise com métricas e gráficos.
 
 Fora da ordem acima, o `scan_node` foi antecipado junto com o `pantilt_dataset` (seção 4.9), porque a coleta de vídeos para o treino da YOLO depende dele.
 

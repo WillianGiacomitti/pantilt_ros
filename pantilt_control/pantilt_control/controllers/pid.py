@@ -53,6 +53,8 @@ class ControladorPID(Controlador):
         self.integral = 0.0          # contribuição integral, rad/s
         self._filtrado = None        # erro filtrado da amostra anterior
         self.saturado = False
+        self._termos = (0.0, 0.0, 0.0)
+        self._u_bruto = 0.0
 
     def compute(self, erro: float, dt: float) -> float:
         p = self.kp * erro
@@ -79,4 +81,12 @@ class ControladorPID(Controlador):
 
         u = p + self.integral + d
         self.saturado = abs(u) > self.max_output
+        self._termos = (p, self.integral, d)
+        self._u_bruto = u
         return min(max(u, -self.max_output), self.max_output)
+
+    def termos(self) -> tuple:
+        return self._termos
+
+    def saida_bruta(self) -> float:
+        return self._u_bruto

@@ -167,3 +167,49 @@ def test_reset_entrada_nula_saida_nula():
     assert c.compute(0.0, 0.0) == 0.0
     assert c.compute(0.0, 0.1) == 0.0
     assert c.integral == 0.0
+
+
+# ---------------- Diagnóstico (termos) ----------------
+def test_termos_somam_a_saida_bruta():
+    c = pid(kp=0.8, ki=0.5, kd=0.3)
+    c.compute(math.radians(3.0), 0.0)
+    for _ in range(5):
+        u = c.compute(math.radians(3.0), 0.1)
+        p, i, d = c.termos()
+        assert p == pytest.approx(0.8 * math.radians(3.0))
+        assert i == pytest.approx(c.integral)
+        assert p + i + d == pytest.approx(c.saida_bruta())
+        assert u == pytest.approx(c.saida_bruta())     # sem saturação
+
+
+def test_saida_bruta_acima_da_saturacao():
+    c = pid(kp=10.0)
+    u = c.compute(math.radians(10.0), 0.0)
+    assert c.saturado
+    assert u == pytest.approx(MAX)
+    assert c.saida_bruta() == pytest.approx(10.0 * math.radians(10.0))
+    assert c.termos()[0] == pytest.approx(c.saida_bruta())
+
+
+def test_reset_zera_termos():
+    c = pid(kp=0.8, ki=1.0, kd=0.3)
+    c.compute(0.2, 0.0)
+    c.compute(0.2, 0.1)
+    c.reset()
+    assert c.termos() == (0.0, 0.0, 0.0)
+    assert c.saida_bruta() == 0.0
+    assert not c.saturado
+
+
+def test_padroes_da_interface():
+    class SemTermos(Controlador):
+        def compute(self, erro, dt):
+            return erro
+
+        def reset(self):
+            pass
+
+    c = SemTermos()
+    assert c.termos() == (0.0, 0.0, 0.0)
+    assert math.isnan(c.saida_bruta())
+    assert not c.saturado

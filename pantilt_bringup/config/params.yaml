@@ -39,6 +39,7 @@ detector_node:
     imgsz: 640                     # tamanho de inferência (múltiplo de 32); menor = mais rápido em CPU
     device: "cpu"                  # "cpu" ou "cuda:0" (o container atual não tem CUDA)
     publish_debug_image: true      # imagem com as bboxes para a web (só desenhada com assinante)
+    publish_timing: true           # /perception/timing: inferência e atraso por quadro (ensaios)
 
 calibration_node:
   ros__parameters:
@@ -83,6 +84,7 @@ visual_servo_node:
     publish_rate_hz: 20.0          # taxa de publicação em /ptu/cmd_vel_auto
     cmd_hold_s: 0.25               # repete o último comando por até este tempo sem alvo novo
     limit_timeout_s: 2.0           # eixo parado com comando empurrando por mais que isso -> aborta
+    publish_debug: true            # /control/servo_debug: θ, termos P/I/D e comando por alvo (ensaios)
 
 inspection_manager:
   ros__parameters:
@@ -103,3 +105,19 @@ capture_node:
     fourcc: "mp4v"                 # codec do OpenCV (4 caracteres)
     min_free_gb: 1.0               # espaço livre mínimo para iniciar e continuar gravando
     queue_size: 30                 # fila do escritor; cheia -> quadros descartados (CaptureStatus.dropped)
+
+experiment_recorder:
+  ros__parameters:
+    output_dir: "/ros2_ws/ensaios"   # uma pasta por rótulo e uma subpasta por gravação (fora do src/ e do git)
+    default_label: "sem_rotulo"    # rótulo até o primeiro /experiment/configure
+    image_mode: "none"             # none (snapshots e video entram na etapa 3)
+    pre_s: 1.0                     # pré-gravação: sinais dos últimos pre_s antes do início
+    tail_s: 1.0                    # cauda: continua gravando depois do fim (assentamento)
+    min_free_gb: 1.0               # espaço livre mínimo para iniciar e continuar gravando
+    jpeg_quality: 85               # snapshots (etapa 3)
+    video_fps: 10.0                # taxa declarada no MP4 (etapa 3)
+    fourcc: "mp4v"                 # codec do vídeo (etapa 3)
+    queue_size: 2000               # fila do escritor de CSV (linhas); cheia -> linhas descartadas
+    # nós cujos parâmetros vão para o resumo.json (nó fora do ar fica como "ausente")
+    param_nodes: ["visual_servo_node", "inspection_manager", "detector_node", "scan_node"]
+    repo_dir: "/ros2_ws/src/pantilt_ros"   # commit registrado no resumo.json
