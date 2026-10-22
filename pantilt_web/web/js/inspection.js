@@ -6,10 +6,14 @@
 // Enquanto o inspection_manager não responde, o painel fica indisponível e a
 // lista de equipamentos é pedida de novo com intervalo crescente. O primeiro
 // /inspection/status recebido indica que o gerenciador subiu e antecipa o pedido.
+//
+// O Iniciar aplica antes a configuração do bloco Ensaio, se ela foi editada e
+// não aplicada (experiment.js); recusada, a inspeção não começa.
 
 import { CONFIG, MODE_CENTER, MODE_TRACK } from './config.js';
 import { onConnect, onDisconnect, service, callService, subscribeLatched, nextRetryMs } from './ros.js';
 import { toast, setGroupEnabled } from './ui.js';
+import { applyIfDirty } from './experiment.js';
 
 const STATE_LABELS = {
   IDLE: 'Ocioso',
@@ -110,6 +114,11 @@ async function start() {
   if (!srv.start) return;
   const equipment = el('insp-equipment').value;
   const mode = el('insp-mode-track').checked ? MODE_TRACK : MODE_CENTER;
+  const refused = await applyIfDirty();
+  if (refused) {
+    toast(`Inspeção não iniciada: ensaio não configurado (${refused})`, 'bad');
+    return;
+  }
   try {
     const res = await callService(srv.start, { equipment, mode });
     toast(res.message || (res.accepted ? 'Inspeção iniciada' : 'Inspeção recusada'),

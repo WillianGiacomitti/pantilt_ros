@@ -46,6 +46,9 @@
       <div class="chip rec-chip" id="rec-chip" title="Gravação do capture_node em andamento" hidden>
         <span class="rec-dot">●</span> REC <span id="rec-time"></span>
       </div>
+      <div class="chip exp-chip" id="exp-chip" title="Gravação do experiment_recorder em andamento" hidden>
+        <span class="rec-dot">●</span> ENSAIO <span id="exp-chip-text"></span>
+      </div>
     </div>
 
     <div class="bottom-row">
@@ -73,10 +76,21 @@
             <button type="submit" class="btn" id="btn-insp-start">Iniciar</button>
             <button type="button" class="btn btn-ghost" id="btn-insp-stop" data-requires="manager">Parar</button>
           </form>
+          <!-- Bloco Ensaio: experiment_recorder (/experiment/configure e /experiment/status) -->
+          <form id="exp-form" class="exp-form">
+            <span class="exp-tag" title="Configuração das próximas gravações do experiment_recorder">Ensaio</span>
+            <input type="text" id="exp-label" maxlength="40" autocomplete="off"
+                   placeholder="Rótulo (ex.: degrau_kp0.8)" aria-label="Rótulo do ensaio">
+            <input type="text" id="exp-notes" maxlength="200" autocomplete="off"
+                   placeholder="Observação" aria-label="Observação do ensaio">
+            <select id="exp-image" aria-label="Modo de imagem"></select>
+            <button type="submit" class="btn btn-ghost" id="btn-exp-apply">Aplicar</button>
+          </form>
           <dl class="insp-status">
             <div><dt>Estado</dt><dd id="insp-state">—</dd></div>
             <div><dt>Equipamento</dt><dd id="insp-current">—</dd></div>
             <div><dt>Erro</dt><dd id="insp-error">—</dd></div>
+            <div><dt>Gravação</dt><dd id="exp-rec">—</dd></div>
           </dl>
           <div class="insp-message" id="insp-message"></div>
         </div>

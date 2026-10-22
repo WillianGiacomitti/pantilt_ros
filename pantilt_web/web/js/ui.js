@@ -2,13 +2,13 @@
 
 let toastTimer = null;
 
-/** Mensagem temporária no rodapé. kind: '', 'good' ou 'bad'. */
-export function toast(text, kind = '') {
+/** Mensagem temporária no rodapé. kind: '', 'good' ou 'bad'; ms: tempo na tela. */
+export function toast(text, kind = '', ms = 2200) {
   const el = document.getElementById('toast');
   el.textContent = text;
   el.className = 'toast show ' + kind;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  toastTimer = setTimeout(() => el.classList.remove('show'), ms);
 }
 
 /** Habilita ou desabilita todos os controles marcados com data-requires="<grupo>". */

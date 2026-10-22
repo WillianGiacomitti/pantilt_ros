@@ -33,7 +33,7 @@
   --radius: 12px;
   --jog: clamp(42px, 7.2vh, 64px);
   --right-w: clamp(290px, 25vw, 360px);
-  --bottom-h: clamp(150px, 26vh, 230px);
+  --bottom-h: clamp(190px, 32vh, 270px);
 }
 
 * { box-sizing: border-box; }
@@ -314,6 +314,14 @@ body.autonomous .topbar { border-bottom-color: var(--accent); }
   border-color: var(--bad);
 }
 .rec-dot { animation: pulse 1.4s ease-in-out infinite; }
+/* Ensaio: canto inferior direito (o topo é do banner de modo automático) */
+.exp-chip {
+  left: auto;
+  right: 10px;
+  font-family: var(--mono);
+  color: var(--bad);
+  border-color: var(--bad);
+}
 
 /* ---------------- Abas (Inspeção | Coleta) ---------------- */
 .insp-card .card-title { align-items: center; }
@@ -386,7 +394,7 @@ body.autonomous .topbar { border-bottom-color: var(--accent); }
 .insp-status {
   margin: 10px 0 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 /* caixas de leitura: contorno por box-shadow para não mudar o tamanho */
@@ -420,6 +428,37 @@ body.autonomous .topbar { border-bottom-color: var(--accent); }
 }
 
 .insp-message.bad { color: var(--bad); }
+
+/* ---------------- Ensaio (experiment_recorder) ---------------- */
+.exp-form {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.4fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+.exp-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--primary-dark);
+}
+.exp-form input[type="text"], .exp-form select {
+  min-width: 0;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+}
+.exp-form input:disabled, .exp-form select:disabled { opacity: .4; }
+.exp-form input:focus, .exp-form select:focus { outline: none; border-color: var(--primary); }
+/* configuração alterada e ainda não aplicada */
+.exp-form .btn-ghost.pending { background: var(--primary); color: var(--on-primary); }
+.exp-form .btn-ghost.pending:hover:not(:disabled) { background: var(--text); }
+#exp-rec[data-state="recording"] { color: var(--bad); }
 
 /* ---------------- Coleta de dataset ---------------- */
 .cap-form {
@@ -644,6 +683,8 @@ input[type=range] { width: 100%; margin: 4px 0 0; accent-color: var(--primary); 
   .insp-status { margin-top: 6px; }
   .tab { padding: 3px 8px; }
   .cap-form input[type="text"], .cap-speed input { padding: 6px 8px; }
+  .exp-form { margin-top: 6px; }
+  .exp-form input[type="text"], .exp-form select { padding: 6px 8px; }
   .btn-stop-all { padding: 10px; }
 }
 
@@ -655,6 +696,9 @@ input[type=range] { width: 100%; margin: 4px 0 0; accent-color: var(--primary); 
   .left { grid-template-rows: auto auto; }
   .video-card { aspect-ratio: 4 / 3; }
   .bottom-row { grid-template-columns: 1fr; }
+  .exp-form { grid-template-columns: auto minmax(0, 1fr) auto auto; grid-auto-flow: dense; }
+  #exp-notes { grid-column: 1 / -1; }
+  .insp-status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cap-form { grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr); }
   .cap-form input[type="text"] { grid-column: 1 / -1; }
   .cap-status { grid-template-columns: repeat(2, minmax(0, 1fr)); }

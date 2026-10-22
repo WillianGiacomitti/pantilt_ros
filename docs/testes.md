@@ -992,9 +992,9 @@ Aquisição de dados para os ensaios do TCC (architecture.md §4.11). Foi feita 
 |---|---|---|
 | 1 | interfaces novas, `/control/servo_debug` (θ, P/I/D, saturação, comando) e `/perception/timing` (inferência e atraso por quadro) | 7.1 |
 | 2 | `experiment_recorder`: uma pasta por inspeção ou goal `Center` direto, com CSVs e `resumo.json` | 7.2 |
-| 3 | imagens: snapshots ou vídeo | (futuro, seção 9) |
-| 4 | bloco Ensaio na aba Inspeção da página | (futuro, seção 9) |
-| 5 | `analisar_ensaios.py`: métricas e gráficos | (futuro, seção 9) |
+| 3 | imagens: snapshots ou vídeo | 7.3 |
+| 4 | bloco Ensaio na aba Inspeção da página | 7.4 |
+| 5 | `analisar_ensaios`: métricas e gráficos | 7.5 |
 
 ### 7.1 Sinais de diagnóstico (etapa 1)
 
@@ -1117,7 +1117,7 @@ cat $U/events.csv
 | 10 | Sem alvo | tire a garrafa de cena; start CENTER | pasta `..._garrafa_nd`; `desfecho: sem_alvo`, `mensagem_final: Alvo não encontrado (varredura completa)`; sem `servo.csv` nem `center_feedback.csv`; `scan[0]` com `completed: true` |
 | 11 | Goal direto | gerenciador em IDLE, `set_target` e `send_goal` CENTER | status `Gravando goal Center direto: ...`; `resumo.json` com `origem: direto`, `readquisicoes: null`, `desfecho: centralizado` (ou `falhou`, se a garrafa estiver fora da imagem: `mensagem_final: alvo perdido`) |
 | 12 | Configuração recusada | `configure` durante uma inspeção | `success: false`, `Gravação em andamento (teste_gravador #NNN): configure depois do fim` |
-| 13 | Modo de imagem | `configure` com `image_mode: 'snapshots'` | `success: false`, `image_mode="snapshots" ainda não implementado (disponível: none)` (até a etapa 3) |
+| 13 | Modo de imagem | `configure` com `image_mode: 'foto'` | `success: false`, `image_mode="foto" desconhecido (opções: none, snapshots, video)` |
 | 14 | Operador assume | durante a inspeção, um jog | IDLE `Inspeção abortada pelo operador`; a pasta fecha ~1 s depois; `events.csv` com `mux,fonte,web` |
 | 15 | Ctrl+C no gravador | durante uma inspeção, Ctrl+C no terminal 3 | log `Gravado: ... (interrompido, X s)`; `resumo.json` com `desfecho: interrompido` e `motivo_interrupcao: nó encerrado`; a inspeção continua normalmente |
 | 16 | Parâmetro inválido | `ros2 run pantilt_experiment experiment_recorder --ros-args -p image_mode:=foto` | `[FATAL] Parâmetro inválido: image_mode="foto" desconhecido (opções: none, snapshots, video)` e o nó sai |
@@ -1135,6 +1135,159 @@ cat $U/events.csv
 - O `commit` é lido quando o nó sobe: depois de mudar de branch ou de commitar, reinicie o gravador. `alteracoes_locais: true` indica arquivos versionados modificados sem commit.
 - Tamanho típico: ~100 KB por 15 s de inspeção.
 - `/ros2_ws/ensaios` fica fora do git e aparece no Windows na pasta do volume.
+
+### 7.3 Imagens (etapa 3)
+
+**O que valida:** os modos de imagem do `experiment_recorder` (architecture.md §4.11, "Imagens"):
+- `snapshots`: arquivos `NN_<evento>.jpg` em cada entrada em CENTERING (ou no início do goal direto), no primeiro `centered=true` e no fim, depois da cauda;
+- `video`: `video.mp4` com o `video_frames.csv`;
+- em ambos, o custo no detector, medido pelo `timing.csv`.
+
+**Pré-requisitos:** seção 7.2 aprovada. O teste 1 dispensa hardware e câmera; os demais precisam do sistema de inspeção funcionando.
+
+**Build e testes automáticos (terminal 1):**
+
+```bash
+cd /ros2_ws && colcon build --symlink-install \
+  --packages-select pantilt_interfaces pantilt_dataset pantilt_experiment pantilt_bringup && ws
+cd /ros2_ws/src/pantilt_ros/pantilt_experiment && python3 -m pytest -q test && cd /ros2_ws
+```
+
+**Terminais 2 a 4:** os mesmos da seção 7.2. **Feche a página web** nos testes 2 e 6: com ela aberta, o detector já desenha a imagem de debug, e a comparação de custo perde o sentido.
+
+**Terminal 5: comandos.** Troque `garrafa` por uma chave do `equipment_file` em uso.
+
+```bash
+ros2 service call /experiment/configure pantilt_interfaces/srv/ConfigureExperiment \
+  "{label: 'teste_imagens', notes: 'roteiro 7.3', image_mode: 'snapshots'}"
+ros2 service call /inspection/start pantilt_interfaces/srv/StartInspection "{equipment: 'garrafa', mode: 0}"
+# trocar para vídeo
+ros2 service call /experiment/configure pantilt_interfaces/srv/ConfigureExperiment \
+  "{label: 'teste_imagens', notes: 'roteiro 7.3', image_mode: 'video'}"
+# última pasta gravada
+U=$(ls -td /ros2_ws/ensaios/teste_imagens/*/ | head -1); echo $U; ls $U
+python3 -c "import json; print(json.load(open('$U/resumo.json'))['imagens'])"
+grep snapshot $U/events.csv
+# quadros do MP4 (deve bater com as linhas do video_frames.csv)
+python3 -c "import cv2; c = cv2.VideoCapture('$U/video.mp4'); print(int(c.get(cv2.CAP_PROP_FRAME_COUNT)))"
+wc -l $U/video_frames.csv
+# taxa e inferência do detector numa gravação (média de inference_ms e quadros/s)
+python3 -c "import numpy as np; d = np.genfromtxt('$U/timing.csv', delimiter=',', names=True); print(f'{1/np.diff(d[\"t\"]).mean():.1f} q/s, inferência {d[\"inference_ms\"].mean():.0f} ms')"
+```
+
+| # | Teste | Comando / ação | Esperado |
+|---|---|---|---|
+| 1 | pytest | terminal 1 | todos passam (`test_session.py`, `test_csv_writer.py` e `test_snapshot_writer.py`) |
+| 2 | Sem imagem | `configure` com `image_mode: 'none'`; start CENTER; durante a inspeção, `ros2 topic info /perception/debug_image` | `Subscription count: 0` (com a página fechada); pasta sem `.jpg` nem `video.mp4`; `imagens: {'snapshots': [], 'video': None}` |
+| 3 | Snapshots, CENTER | `configure` com `snapshots`; start CENTER | pasta com `01_inicio.jpg`, `02_centrado.jpg` e `03_fim.jpg`; o `inicio` mostra a bbox fora do centro e o `fim` a garrafa centralizada; `grep snapshot` com as três linhas, na ordem |
+| 4 | Snapshots, readquisição | start TRACK; em TRACKING, cubra a garrafa ~2 s e descubra; depois `stop` | `01_inicio`, `02_centrado`, `03_inicio` (a readquisição) e `04_fim`; não há um segundo `centrado` (só o primeiro conta) |
+| 5 | Snapshots, goal direto | gerenciador em IDLE; `set_target` e `send_goal` CENTER (comandos da §7.2) | `01_inicio`, `02_centrado` e `03_fim`. O `t` do `inicio` no `resumo.json` pode ser algumas décimas de segundo maior que zero: é o primeiro quadro desenhado depois que o detector descobre a assinatura |
+| 6 | Vídeo | `configure` com `video`; start CENTER | `video.mp4` que abre no Windows e mostra as caixas; `CAP_PROP_FRAME_COUNT` igual às linhas do `video_frames.csv` menos o cabeçalho e a `imagens.video.quadros`; `descartados: 0`, `erro: ''` |
+| 7 | Custo no detector | taxa e inferência do `timing.csv` nas gravações dos testes 2, 3 e 6 | anote os três valores; `snapshots` e `video` devem ficar próximos de `none` (a imagem de debug é desenhada, mas a inferência domina). Uma queda grande da taxa indica que o modo pesa no ensaio |
+| 8 | Ctrl+C com vídeo | gravação `video` em andamento; Ctrl+C no terminal 3 | `desfecho: interrompido`; o `video.mp4` abre normalmente (finalizado) |
+| 9 | Configuração | `configure` com `image_mode: 'foto'` | `success: false`, `image_mode="foto" desconhecido (opções: none, snapshots, video)` |
+
+**Preste atenção:**
+
+- Os snapshots são **a imagem de debug** (com as caixas e o alvo desenhados), não a imagem crua da câmera.
+- O `fim` é tirado ao fechar, depois da cauda (`tail_s`): mostra o assentamento. Sem nenhum quadro recebido, não há `fim`.
+- No vídeo, o `t` do `video_frames.csv` é o `header.stamp` do quadro: use-o para alinhar o vídeo com o `servo.csv`. A taxa declarada no MP4 (`video_fps`) é só nominal.
+- Tamanho do vídeo: anote o do teste 6 (`du -h $U/video.mp4`) para dimensionar uma série de ensaios. O disco é conferido a cada 5 s (`min_free_gb`).
+
+### 7.4 Bloco Ensaio na página (etapa 4)
+
+**O que valida:** o bloco **Ensaio** da aba Inspeção (architecture.md §4.8):
+- a linha de configuração (rótulo, observação, modo de imagem e **Aplicar**), que chama o `/experiment/configure`;
+- a caixa **Gravação** e o chip `● ENSAIO` sobre o vídeo, que mostram o `/experiment/status`.
+
+**Pré-requisitos:** seção 7.2 aprovada (e a 7.3, para os modos de imagem).
+
+**Build (terminal 1):** a página é copiada para `share` no build.
+
+```bash
+cd /ros2_ws && colcon build --symlink-install --packages-select pantilt_web && ws
+```
+
+**Terminais:**
+- **2:** `ros2 launch pantilt_bringup system.launch.py recorder:=false`;
+- **3:** `ros2 run pantilt_experiment experiment_recorder --ros-args --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml`;
+- **4:** `ros2 topic echo /experiment/status`.
+
+Abra `http://localhost:8080` e recarregue sem cache (Ctrl+F5), porque o navegador guarda os `.js` antigos.
+
+| # | Teste | Como | Esperado |
+|---|---|---|---|
+| 1 | Layout | página em 1366×768 (ou a tela do notebook do ensaio) | a linha `ENSAIO` cabe entre o formulário e as caixas, e as quatro caixas (Estado, Equipamento, Erro, Gravação) e a linha de mensagem aparecem inteiras, sem corte. Se algo cortar, ajuste `--bottom-h` no `style.css` |
+| 2 | Abertura | página com o gravador no ar | os campos mostram o rótulo do nó (`sem_rotulo`), a observação vazia e `Sem imagem`; a caixa Gravação mostra `próx. #NNN` |
+| 3 | Gravador fora do ar | terminal 3 parado; recarregue a página | campos e Aplicar desabilitados; o rótulo mostra `Aguardando o experiment_recorder…` como placeholder; a caixa mostra `—` |
+| 4 | Gravador sobe | suba o terminal 3 | em poucos segundos o bloco fica disponível, sem recarregar |
+| 5 | Aplicar | rótulo `Teste Página`, observação `roteiro 7.4`, modo `Snapshots`; **Aplicar** | o Aplicar fica roxo cheio ao editar e volta ao contorno ao aplicar; toast verde `Próxima gravação: teste_pagina #001 \| imagens: snapshots \| obs.: roteiro 7.4`; o campo passa a `teste_pagina` (rótulo limpo pelo nó); terminal 4 com `label: teste_pagina` |
+| 6 | Configuração pela CLI | `ros2 service call /experiment/configure pantilt_interfaces/srv/ConfigureExperiment "{label: 'cli', notes: '', image_mode: 'none'}"` | em ~0,5 s os campos mostram `cli`, a observação vazia e `Sem imagem` |
+| 7 | Edição preservada | digite um rótulo sem aplicar e repita a chamada da CLI | o campo editado **não** é sobrescrito; o Aplicar continua destacado |
+| 8 | Iniciar aplica antes | rótulo `teste_pagina` (sem Aplicar); **Iniciar** CENTER | a inspeção começa; a gravação sai em `/ros2_ws/ensaios/teste_pagina/`; o Aplicar volta ao contorno |
+| 9 | Durante a gravação | observe durante a inspeção | caixa Gravação `● #001 00:05` em vermelho, com o tempo subindo; chip `● ENSAIO teste_pagina #001 00:05` no canto inferior direito do vídeo; campos e Aplicar desabilitados (também na cauda) |
+| 10 | Fim da gravação | inspeção volta ao IDLE | ~1 s depois (cauda), toast `Gravado: teste_pagina/001_..._center (centralizado, X s)` por ~6 s; o chip some; a caixa mostra `próx. #002`; o tooltip da caixa mostra a mensagem e a pasta |
+| 11 | Iniciar com recusa | com `tail_s` maior para dar tempo (terminal 3 com `-p tail_s:=10.0`): termine uma inspeção, edite o rótulo e clique em Iniciar durante a cauda | toast vermelho `Inspeção não iniciada: ensaio não configurado (Gravação em andamento ...)`; a inspeção não começa |
+| 12 | Gravação não iniciada | terminal 3 com `-p min_free_gb:=100000.0`; Iniciar | a inspeção roda; toast `Gravação não iniciada: pouco espaço em disco ...`; nenhum chip |
+| 13 | Recarregar durante a gravação | F5 no meio de uma inspeção gravada | o bloco volta direto em `● #NNN` com o tempo correto (status transient_local) |
+| 14 | Gravador cai durante a gravação | Ctrl+C no terminal 3 no meio de uma inspeção | em ~2 s o bloco fica indisponível e o chip some; a inspeção continua |
+| 15 | Goal direto | `send_goal` CENTER pela CLI (§7.2) com a página aberta | a caixa e o chip mostram a gravação do goal direto como numa inspeção |
+
+**Preste atenção:**
+
+- O bloco só configura as **próximas** gravações: o nó recusa mudanças durante uma gravação, inclusive na cauda.
+- O rótulo vazio vale o `default_label` do nó (`sem_rotulo`).
+- O Iniciar só aplica a configuração se ela foi editada; sem edição, nada é chamado antes do `/inspection/start`.
+
+### 7.5 Análise dos ensaios (etapa 5)
+
+**O que valida:** o `analisar_ensaios` (architecture.md §4.11 "Análise" e §10). Ele lê as pastas do `experiment_recorder` e gera em `<pasta>/_analise/`:
+- `metricas.csv`, uma linha por gravação;
+- `resumo_por_rotulo.csv`;
+- as figuras em PNG e PDF.
+
+**Pré-requisitos:** gravações reais de pelo menos dois rótulos, com algumas repetições cada (seção 7.2), e de preferência um TRACK, para o `e_d`. Os testes 1 e 2 dispensam hardware.
+
+**Build e testes automáticos (terminal 1):**
+
+```bash
+cd /ros2_ws && colcon build --symlink-install --packages-select pantilt_experiment && ws
+cd /ros2_ws/src/pantilt_ros/pantilt_experiment && python3 -m pytest -q test && cd /ros2_ws
+```
+
+**Comandos:**
+
+```bash
+ros2 run pantilt_experiment analisar_ensaios                       # /ros2_ws/ensaios
+ros2 run pantilt_experiment analisar_ensaios --rotulos degrau_kp0.5 degrau_kp0.8
+ros2 run pantilt_experiment analisar_ensaios --sem-figuras         # só os CSVs (rápido)
+A=/ros2_ws/ensaios/_analise; ls $A $A/figuras
+python3 -c "import csv; [print(r['rotulo'], r['repeticao'], r['desfecho'], r['t_c_s'], r['e_r_px'], r['mp_pan_deg'], r['iae_px_s']) for r in csv.DictReader(open('$A/metricas.csv'))]"
+```
+
+| # | Teste | Comando / ação | Esperado |
+|---|---|---|---|
+| 1 | pytest | terminal 1 | todos passam (inclui `test_analysis.py` e `test_plots.py`) |
+| 2 | Sem gravações | `analisar_ensaios /tmp` | `Nenhuma gravação encontrada em /tmp` e código de saída 1 |
+| 3 | Execução completa | `analisar_ensaios` | `N gravações analisadas -> /ros2_ws/ensaios/_analise`; resumo por rótulo no terminal (sucesso, `t_c`, `e_r`, IAE, `M_p` e `e_d` com média ± desvio); nenhum aviso de erro |
+| 4 | `t_c` e `e_r` | compare o `metricas.csv` com o `resumo.json` de uma gravação CENTER | `t_c_s` e `e_r_px` iguais ao `convergence_time_s` e ao `final_error_px` do goal que convergiu |
+| 5 | Readquisição | gravação TRACK com perda (§7.2 teste 9) | uma linha, com as métricas do goal que convergiu; `readquisicoes: 1`; `e_d_px` preenchido |
+| 6 | Sem alvo e interrompida | gravações `sem_alvo` e `interrompido` da §7.2 | `sem_alvo`: métricas vazias e sem figura própria; `interrompido`: fica no `metricas.csv`, mas sai das estatísticas do `resumo_por_rotulo.csv` (linha `interrompidas` com a contagem) |
+| 7 | Gravação em andamento | rode durante uma gravação | `Aviso: ... sem resumo.json (gravação em andamento?): ignorada` |
+| 8 | Figura de uma gravação | abra um PNG de `figuras/<rótulo>/` | título com rótulo, repetição, modo, desfecho, `t_c`, `e_r`, IAE e `M_p`; quatro painéis (erro, θ, comando, juntas); linhas verticais de início do goal, primeira detecção, início da permanência e centralizado; vírgula decimal |
+| 9 | Coerência da figura | na mesma figura | o início da permanência fica `t_c` depois da primeira detecção; o erro fica dentro da tolerância dali até o centralizado (`hold_time_s` depois) |
+| 10 | Comparativas | `figuras/comparativo_metricas` e `comparativo_respostas` | um boxplot por rótulo, com os pontos de cada repetição; barras de sucesso com o `n`; respostas sobrepostas por rótulo (TRACK tracejado) |
+| 11 | PDF | abra um `.pdf` no Windows | vetorial (o zoom não pixela), com texto selecionável |
+
+**Preste atenção:**
+
+- **Goal principal:** com readquisições, `t_c`, `e_r`, `M_p`, IAE e `e_d` são do goal da **primeira convergência** (o mesmo critério do `Center.Result`). Sem convergência, `t_c` e `e_r` ficam vazios, e não 0.
+- **`M_p`:** é o maior `|θ|` do lado oposto ao do erro inicial, até o primeiro centralizado. O `%` fica vazio quando o eixo começou com menos de 1° de erro.
+- **Primeira detecção antes do início do goal:** é normal. A primeira detecção usa o `header.stamp` (instante da captura), que precede a chegada do alvo ao servo por ~115 ms.
+- **`--rotulos`:** os CSVs de `_analise` são reescritos só com os rótulos pedidos. Para a tabela final, rode sem filtro.
+- **Figuras antigas:** figuras de gravações apagadas continuam em `_analise/figuras`. Apague a pasta `_analise` para regenerar do zero.
+- **Tempo:** cada figura leva ~2 s (PNG mais PDF). Para conferir só os números, use `--sem-figuras`.
+- **Decimal:** os CSVs usam ponto, que o numpy e as planilhas leem sem configuração. No Excel em português, importe com o separador decimal "." (Dados > De Texto/CSV).
 
 ---
 
@@ -1170,6 +1323,3 @@ Seções a acrescentar aqui quando os itens existirem:
 
 - `pantilt_control`: sintonia e ensaios do `visual_servo_node` (tarefa E) e `controllers/fuzzy.py`;
 - `pantilt_web`: inspeção pela página (aba Inspeção com o `inspection_manager`);
-- `pantilt_experiment`, etapa 3: imagens do `experiment_recorder` (snapshots e vídeo, custo no detector pelo `timing.csv`);
-- `pantilt_experiment`, etapa 4: bloco Ensaio na aba Inspeção (`/experiment/configure` e `/experiment/status` pela página);
-- `pantilt_experiment`, etapa 5: `analisar_ensaios.py` (métricas da architecture.md §10 e gráficos).

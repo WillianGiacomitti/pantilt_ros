@@ -16,6 +16,8 @@ Tópicos:
            /ptu/cmd_vel_auto, /ptu/cmd_vel, /ptu/control_source, /ptu/errors,
            /camera/camera_info e os tópicos ocultos status e feedback de
            /control/center e /control/scan
+  assina   /perception/debug_image  (sensor_msgs/Image) - só durante a gravação,
+           nos modos de imagem snapshots e video
 
 Clientes:
   /control/center/_action/get_result, /control/scan/_action/get_result - resultado dos goals
@@ -27,6 +29,9 @@ Comportamento:
     pré-gravação;
   - pasta <output_dir>/<rótulo>/NNN_AAAAMMDD_HHMMSS, renomeada ao fechar para
     ..._<equipamento>_<modo>, com um CSV por sinal e o resumo.json;
+  - imagens (image_mode): snapshots NN_<evento>.jpg na entrada em CENTERING
+    (ou no início do goal direto), no primeiro centered=true e ao fechar; ou
+    video.mp4 com o video_frames.csv (índice do quadro x header.stamp);
   - ao fechar, espera até RESULT_WAIT_S pelos resultados e parâmetros pendentes;
   - não abre (ou fecha a atual) com espaço livre abaixo de min_free_gb;
   - Ctrl+C no meio de uma gravação: fecha a pasta com desfecho "interrompido".
@@ -46,6 +51,7 @@ from datetime import datetime
 
 import rclpy
 from action_msgs.msg import GoalStatus, GoalStatusArray
+from cv_bridge import CvBridge, CvBridgeError
 from geometry_msgs.msg import Twist
 from rcl_interfaces.srv import GetParameters, ListParameters
 from rclpy.node import Node
@@ -56,16 +62,19 @@ from rclpy.qos import (
 )
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
-from sensor_msgs.msg import CameraInfo, JointState
+from sensor_msgs.msg import CameraInfo, Image, JointState
 from std_msgs.msg import String
 from vision_msgs.msg import Detection2DArray
 
+from pantilt_dataset.video_recorder import VideoRecorder
 from pantilt_experiment.csv_writer import CsvWriter
 from pantilt_experiment.session import (
-    ACTION_CLOSE, MODE_TRACK, SOURCE_DIRECT, SOURCE_INSPECTION, RecordingTrigger,
-    check_image_mode, clean_label, csv_columns, final_basename, folder_basename, free_gb,
-    git_info, infer_mode, next_repetition, outcome, validate_params,
+    ACTION_CLOSE, IMAGE_MODE_NONE, IMAGE_MODE_SNAPSHOTS, MODE_TRACK, SNAP_CENTERED, SNAP_END,
+    SNAP_START, SOURCE_DIRECT, SOURCE_INSPECTION, RecordingTrigger, check_image_mode,
+    clean_label, csv_columns, final_basename, folder_basename, free_gb, git_info, infer_mode,
+    next_repetition, outcome, snapshot_name, validate_params,
 )
+from pantilt_experiment.snapshot_writer import SnapshotWriter
 from pantilt_interfaces.action import Center, Scan
 from pantilt_interfaces.msg import (
     DetectionTiming, ExperimentStatus, InspectionStatus, ServoDebug, VisualTarget,
@@ -92,6 +101,14 @@ SIGNAL_QUEUE = 50
 
 # Timeout de cada volta do executor; limita a demora em atender o Ctrl+C
 SPIN_TIMEOUT_S = 0.1
+
+# Imagens: arquivo do vídeo e filas dos escritores (quadros)
+VIDEO_FILE = 'video.mp4'
+VIDEO_QUEUE_SIZE = 30
+SNAPSHOT_QUEUE_SIZE = 10
+
+# Intervalo mínimo entre avisos repetidos no log (quadros descartados)
+LOG_THROTTLE_S = 5.0
 
 # Ações observadas
 ACTION_CENTER = 'center'
@@ -153,6 +170,15 @@ class _Recording:
     closing_since: float = None  # fim pedido; espera as pendências
     interrupted: str = ''        # motivo da interrupção, se houve
     write_error_logged: bool = False
+    # Imagens (só nos modos snapshots e video)
+    image_sub: object = None     # assinatura de /perception/debug_image
+    snap_writer: SnapshotWriter = None
+    last_image: Image = None     # último quadro (sem conversão), para os snapshots
+    pending_snaps: list = field(default_factory=list)  # eventos à espera de um quadro
+    snap_seq: int = 0
+    snapshots: list = field(default_factory=list)
+    video: VideoRecorder = None
+    video_index: int = 0         # próximo índice de quadro no MP4
 
     def rel(self, t: float) -> float:
         return round(t - self.t0, 4)
@@ -168,7 +194,6 @@ class ExperimentRecorder(Node):
         self.declare_parameter('pre_s', 1.0)
         self.declare_parameter('tail_s', 1.0)
         self.declare_parameter('min_free_gb', 1.0)
-        # Imagens (snapshots e video): usados a partir da etapa 3
         self.declare_parameter('jpeg_quality', 85)
         self.declare_parameter('video_fps', 10.0)
         self.declare_parameter('fourcc', 'mp4v')
@@ -185,14 +210,19 @@ class ExperimentRecorder(Node):
         self.tail_s = p('tail_s')
         self.min_free_gb = p('min_free_gb')
         self.queue_size = p('queue_size')
+        self.jpeg_quality = p('jpeg_quality')
+        self.video_fps = p('video_fps')
+        self.fourcc = p('fourcc')
         self.param_nodes = [n.strip('/') for n in p('param_nodes') if n.strip('/')]
 
         try:
             validate_params(self.image_mode, self.pre_s, self.tail_s, self.min_free_gb,
-                            self.queue_size)
+                            self.queue_size, self.jpeg_quality, self.video_fps, self.fourcc)
         except ValueError as e:
             self.get_logger().fatal(f'Parâmetro inválido: {e}')
             raise
+
+        self.bridge = CvBridge()
 
         self.commit = git_info(p('repo_dir'))
         if self.commit is None:
@@ -344,11 +374,68 @@ class ExperimentRecorder(Node):
         if action == ACTION_CENTER:
             r = self._rec
             if r is not None and fb.centered:
+                if not r.centered_seen:
+                    self._snapshot(r, SNAP_CENTERED)
                 r.centered_seen = True
             self._row('center_feedback', None, [
                 goal, fb.error_x, fb.error_y, fb.error_px, fb.target_visible, fb.centered])
         else:
             self._row('scan_feedback', None, [goal, fb.pan_deg, fb.tilt_deg, fb.pass_index])
+
+    # ---------------- Imagens ----------------
+    def _to_bgr(self, msg: Image):
+        try:
+            return self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except CvBridgeError as e:
+            self.get_logger().warn(f'Quadro ignorado: conversão falhou ({e})',
+                                   throttle_duration_sec=LOG_THROTTLE_S)
+            return None
+
+    def on_debug_image(self, msg: Image):
+        r = self._rec
+        if r is None or r.closing_since is not None:
+            return
+        if r.snap_writer is not None:
+            r.last_image = msg
+            while r.pending_snaps:
+                self._save_snapshot(r, r.pending_snaps.pop(0), msg)
+        elif r.video is not None:
+            frame = self._to_bgr(msg)
+            if frame is None:
+                return
+            if r.video.submit(frame):
+                self._row('video_frames', _seconds(msg.header.stamp), [r.video_index])
+                r.video_index += 1
+            elif not r.video.error:
+                self.get_logger().warn('Fila do vídeo cheia: quadros descartados',
+                                       throttle_duration_sec=LOG_THROTTLE_S)
+
+    def _snapshot(self, r: _Recording, event: str):
+        """Snapshot do último quadro; sem quadro ainda, espera o próximo."""
+        if r.snap_writer is None or r.closing_since is not None:
+            return
+        if r.last_image is None:
+            r.pending_snaps.append(event)
+        else:
+            self._save_snapshot(r, event, r.last_image)
+
+    def _save_snapshot(self, r: _Recording, event: str, msg: Image):
+        frame = self._to_bgr(msg)
+        if frame is None:
+            return
+        name = snapshot_name(r.snap_seq + 1, event)
+        if not r.snap_writer.submit(os.path.join(r.folder, name), frame):
+            self.get_logger().warn(f'Snapshot {name} descartado: fila do escritor cheia')
+            return
+        r.snap_seq += 1
+        t = _seconds(msg.header.stamp)
+        r.snapshots.append({'arquivo': name, 'evento': event, 't': r.rel(t)})
+        self._event('gravador', 'snapshot', name, t)
+
+    def _stop_images(self, r: _Recording):
+        if r.image_sub is not None:
+            self.destroy_subscription(r.image_sub)
+            r.image_sub = None
 
     # ---------------- Inspeção ----------------
     def on_inspection_status(self, msg: InspectionStatus):
@@ -368,6 +455,7 @@ class ExperimentRecorder(Node):
             if msg.state == STATE_CENTERING and (previous is None
                                                  or previous[0] != STATE_CENTERING):
                 r.centering_entries += 1
+                self._snapshot(r, SNAP_START)
             if msg.message:
                 r.last_message = msg.message
         self._event('inspecao', msg.state, msg.message, _seconds(msg.header.stamp))
@@ -525,8 +613,21 @@ class ExperimentRecorder(Node):
             r.writer.write(name, [r.rel(t), r.rel(t_rx), *values])
         self._pre.clear()
 
+        # Imagens: a assinatura só existe durante a gravação (o detector só
+        # desenha a imagem de debug quando há assinante)
+        if r.image_mode != IMAGE_MODE_NONE:
+            if r.image_mode == IMAGE_MODE_SNAPSHOTS:
+                r.snap_writer = SnapshotWriter(self.jpeg_quality, SNAPSHOT_QUEUE_SIZE)
+            else:
+                r.video = VideoRecorder(os.path.join(folder, VIDEO_FILE), self.video_fps,
+                                        self.fourcc, VIDEO_QUEUE_SIZE)
+            r.image_sub = self.create_subscription(
+                Image, '/perception/debug_image', self.on_debug_image, qos_profile_sensor_data)
+
         origem = 'inspeção' if source == SOURCE_INSPECTION else 'goal Center direto'
         self._event('gravador', 'inicio', f'{source} | {r.label} #{repetition:03d}')
+        if source == SOURCE_DIRECT:
+            self._snapshot(r, SNAP_START)
         self._snapshot_params(r)
         self.get_logger().info(f'Gravação iniciada ({origem}): {folder}')
         self._publish_status()
@@ -545,6 +646,10 @@ class ExperimentRecorder(Node):
         if reason:
             r.interrupted = reason
         if r.closing_since is None:
+            # Snapshot do fim: o último quadro da gravação (eventos pendentes se perdem)
+            if r.snap_writer is not None and r.last_image is not None:
+                self._save_snapshot(r, SNAP_END, r.last_image)
+            self._stop_images(r)
             self._event('gravador', 'fim', reason)
             r.closing_since = now
         if force or reason or r.pending <= 0 or now - r.closing_since >= RESULT_WAIT_S:
@@ -552,6 +657,12 @@ class ExperimentRecorder(Node):
 
     def _finish(self, r: _Recording):
         self._rec = None
+        self._stop_images(r)
+        # Os escritores de imagem terminam antes de a pasta ser renomeada
+        if r.snap_writer is not None:
+            r.snap_writer.close()
+        if r.video is not None:
+            r.video.close()
         rows = r.writer.close()
         now = self._now()
         ended_at = datetime.now()
@@ -597,6 +708,15 @@ class ExperimentRecorder(Node):
             'linhas': rows,
             'linhas_descartadas': r.writer.dropped,
             'erro_escrita': r.writer.error,
+            'imagens': {
+                'snapshots': r.snapshots,
+                'video': None if r.video is None else {
+                    'quadros': r.video.frames,
+                    'descartados': r.video.dropped,
+                    'tamanho_diferente': r.video.size_mismatch,
+                    'erro': r.video.error,
+                },
+            },
         }
         path = os.path.join(folder, 'resumo.json')
         try:
@@ -609,9 +729,20 @@ class ExperimentRecorder(Node):
         self._next_rep = next_repetition(self._label_dir())
         self._message = (f'Gravado: {r.label}/{os.path.basename(folder)} ({result}, '
                          f'{summary["duracao_s"]:.1f} s)')
-        if r.writer.dropped or r.writer.error:
-            self._message += (f' | {r.writer.dropped} linhas descartadas'
-                              + (f', {r.writer.error}' if r.writer.error else ''))
+        problems = []
+        if r.writer.dropped:
+            problems.append(f'{r.writer.dropped} linhas descartadas')
+        if r.writer.error:
+            problems.append(r.writer.error)
+        if r.video is not None:
+            if r.video.dropped:
+                problems.append(f'{r.video.dropped} quadros do vídeo descartados')
+            if r.video.error:
+                problems.append(r.video.error)
+        if r.snap_writer is not None and r.snap_writer.error:
+            problems.append(r.snap_writer.error)
+        if problems:
+            self._message += ' | ' + ', '.join(problems)
             self.get_logger().warn(self._message)
         else:
             self.get_logger().info(self._message)

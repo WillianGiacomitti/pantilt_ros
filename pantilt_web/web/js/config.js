@@ -67,6 +67,7 @@ export const CONFIG = {
     status:        { name: '/inspection/status',      type: 'pantilt_interfaces/InspectionStatus' },
     detections:    { name: '/perception/detections',  type: 'vision_msgs/Detection2DArray' },
     captureStatus: { name: '/capture/status',         type: 'pantilt_interfaces/CaptureStatus' },
+    experimentStatus: { name: '/experiment/status',   type: 'pantilt_interfaces/ExperimentStatus' },
   },
 
   services: {
@@ -76,6 +77,7 @@ export const CONFIG = {
     stop:          { name: '/inspection/stop',            type: 'std_srvs/Trigger' },
     captureStart:  { name: '/capture/start',              type: 'pantilt_interfaces/StartCapture' },
     captureStop:   { name: '/capture/stop',               type: 'std_srvs/Trigger' },
+    experimentConfigure: { name: '/experiment/configure', type: 'pantilt_interfaces/ConfigureExperiment' },
   },
 
   capture: {
@@ -85,8 +87,21 @@ export const CONFIG = {
     // Velocidade máxima aceita pelo capture_node/scan_node
     maxSpeedDegS: 30,
   },
+
+  experiment: {
+    // /experiment/status chega a 2 Hz; sem ele por mais que isso, o
+    // experiment_recorder é considerado fora do ar
+    statusStaleMs: 2000,
+  },
 };
 
 // Constantes de pantilt_interfaces/srv/StartInspection
 export const MODE_CENTER = 0;
 export const MODE_TRACK = 1;
+
+// Modos de imagem do experiment_recorder (architecture.md §4.11) e o texto na página
+export const IMAGE_MODES = [
+  { value: 'none', label: 'Sem imagem' },
+  { value: 'snapshots', label: 'Snapshots' },
+  { value: 'video', label: 'Vídeo' },
+];

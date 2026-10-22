@@ -3,7 +3,7 @@
 <package format="3">
   <name>pantilt_experiment</name>
   <version>0.1.0</version>
-  <description>Ensaios do TCC: gravação de cada inspeção em CSV e JSON (experiment_recorder).</description>
+  <description>Ensaios do TCC: gravação de cada inspeção em CSV e JSON, com snapshots ou vídeo opcionais (experiment_recorder), e análise com métricas e gráficos (analisar_ensaios).</description>
   <maintainer email="willian@todo.com">Willian Luiz Giacomitti</maintainer>
   <license>MIT</license>
 
@@ -14,6 +14,11 @@
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>vision_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>pantilt_dataset</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
   <exec_depend>pantilt_interfaces</exec_depend>
 
   <test_depend>python3-pytest</test_depend>

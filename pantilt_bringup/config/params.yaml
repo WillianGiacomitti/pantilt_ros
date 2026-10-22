@@ -110,13 +110,13 @@ experiment_recorder:
   ros__parameters:
     output_dir: "/ros2_ws/ensaios"   # uma pasta por rótulo e uma subpasta por gravação (fora do src/ e do git)
     default_label: "sem_rotulo"    # rótulo até o primeiro /experiment/configure
-    image_mode: "none"             # none (snapshots e video entram na etapa 3)
+    image_mode: "none"             # none, snapshots (JPEG em CENTERING, centrado e fim) ou video (MP4)
     pre_s: 1.0                     # pré-gravação: sinais dos últimos pre_s antes do início
     tail_s: 1.0                    # cauda: continua gravando depois do fim (assentamento)
     min_free_gb: 1.0               # espaço livre mínimo para iniciar e continuar gravando
-    jpeg_quality: 85               # snapshots (etapa 3)
-    video_fps: 10.0                # taxa declarada no MP4 (etapa 3)
-    fourcc: "mp4v"                 # codec do vídeo (etapa 3)
+    jpeg_quality: 85               # qualidade dos snapshots (1 a 100)
+    video_fps: 10.0                # taxa declarada no MP4 (a real fica no video_frames.csv)
+    fourcc: "mp4v"                 # codec do vídeo (4 caracteres)
     queue_size: 2000               # fila do escritor de CSV (linhas); cheia -> linhas descartadas
     # nós cujos parâmetros vão para o resumo.json (nó fora do ar fica como "ausente")
     param_nodes: ["visual_servo_node", "inspection_manager", "detector_node", "scan_node"]

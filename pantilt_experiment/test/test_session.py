@@ -5,10 +5,11 @@ from datetime import datetime
 import pytest
 
 from pantilt_experiment.session import (
-    ACTION_CLOSE, ACTION_OPEN, COLUMNS, MAX_LABEL_LEN, MODE_CENTER, MODE_TRACK, MODE_UNKNOWN,
-    OUTCOME_CENTERED, OUTCOME_FAILED, OUTCOME_INTERRUPTED, OUTCOME_NO_TARGET, OUTCOME_TRACKED,
-    SOURCE_DIRECT, SOURCE_INSPECTION, RecordingTrigger, check_image_mode, clean_label,
-    csv_columns, final_basename, folder_basename, git_info, infer_mode, next_repetition, outcome,
+    ACTION_CLOSE, ACTION_OPEN, COLUMNS, IMAGE_MODES, MAX_LABEL_LEN, MODE_CENTER, MODE_TRACK,
+    MODE_UNKNOWN, OUTCOME_CENTERED, OUTCOME_FAILED, OUTCOME_INTERRUPTED, OUTCOME_NO_TARGET,
+    OUTCOME_TRACKED, SNAP_CENTERED, SNAP_END, SNAP_START, SOURCE_DIRECT, SOURCE_INSPECTION,
+    RecordingTrigger, check_image_mode, clean_label, csv_columns, final_basename,
+    folder_basename, git_info, infer_mode, next_repetition, outcome, snapshot_name,
     validate_params,
 )
 
@@ -91,27 +92,44 @@ def test_outcome():
 
 # ---------------- Parâmetros ----------------
 def test_parametros_validos():
-    validate_params('none', 1.0, 1.0, 1.0, 2000)
-    validate_params('none', 0.0, 0.0, 0.0, 1)
+    validate_params('none', 1.0, 1.0, 1.0, 2000, 85, 10.0, 'mp4v')
+    validate_params('none', 0.0, 0.0, 0.0, 1, 1, 0.1, 'XVID')
+    validate_params('snapshots', 1.0, 1.0, 1.0, 2000, 100, 10.0, 'mp4v')
+    validate_params('video', 1.0, 1.0, 1.0, 2000, 85, 30.0, 'mp4v')
 
 
 @pytest.mark.parametrize('args', [
-    ('foto', 1.0, 1.0, 1.0, 10),
-    ('none', -0.1, 1.0, 1.0, 10),
-    ('none', 1.0, -0.1, 1.0, 10),
-    ('none', 1.0, 1.0, -1.0, 10),
-    ('none', 1.0, 1.0, 1.0, 0),
+    ('foto', 1.0, 1.0, 1.0, 10, 85, 10.0, 'mp4v'),
+    ('none', -0.1, 1.0, 1.0, 10, 85, 10.0, 'mp4v'),
+    ('none', 1.0, -0.1, 1.0, 10, 85, 10.0, 'mp4v'),
+    ('none', 1.0, 1.0, -1.0, 10, 85, 10.0, 'mp4v'),
+    ('none', 1.0, 1.0, 1.0, 0, 85, 10.0, 'mp4v'),
+    ('none', 1.0, 1.0, 1.0, 10, 0, 10.0, 'mp4v'),
+    ('none', 1.0, 1.0, 1.0, 10, 101, 10.0, 'mp4v'),
+    ('none', 1.0, 1.0, 1.0, 10, 85, 0.0, 'mp4v'),
+    ('none', 1.0, 1.0, 1.0, 10, 85, 10.0, 'mp4'),
 ])
 def test_parametros_invalidos(args):
     with pytest.raises(ValueError):
         validate_params(*args)
 
 
-def test_modos_de_imagem_da_etapa_3_ainda_recusados():
-    check_image_mode('none')
-    for modo in ('snapshots', 'video'):
-        with pytest.raises(ValueError, match='ainda não implementado'):
-            check_image_mode(modo)
+def test_modos_de_imagem():
+    for modo in IMAGE_MODES:
+        check_image_mode(modo)
+    assert set(IMAGE_MODES) == {'none', 'snapshots', 'video'}
+    with pytest.raises(ValueError, match='desconhecido'):
+        check_image_mode('foto')
+
+
+def test_nome_do_snapshot():
+    assert snapshot_name(1, SNAP_START) == '01_inicio.jpg'
+    assert snapshot_name(2, SNAP_CENTERED) == '02_centrado.jpg'
+    assert snapshot_name(12, SNAP_END) == '12_fim.jpg'
+
+
+def test_colunas_do_video_frames():
+    assert csv_columns()['video_frames'] == ('t', 't_rx', 'frame')
 
 
 # ---------------- Gatilho: inspeção ----------------

@@ -14,12 +14,13 @@ setup(
     zip_safe=True,
     maintainer='Willian Luiz Giacomitti',
     maintainer_email='willian@todo.com',
-    description='Ensaios do TCC: gravação de cada inspeção em CSV e JSON (experiment_recorder).',
+    description='Ensaios do TCC: gravação de cada inspeção em CSV e JSON, com snapshots ou vídeo opcionais (experiment_recorder), e análise com métricas e gráficos (analisar_ensaios).',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'experiment_recorder = pantilt_experiment.experiment_recorder:main',
+            'analisar_ensaios = pantilt_experiment.analisar_ensaios:main',
         ],
     },
 )

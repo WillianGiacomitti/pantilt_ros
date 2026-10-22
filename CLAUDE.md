@@ -106,9 +106,9 @@ docs/                 architecture.md (fonte da verdade), testes.md (roteiros de
 - [x] ensaios, etapa 0: contrato na `architecture.md` v0.6 (§4.11, §10)
 - [x] ensaios, etapa 1: `ServoDebug`/`DetectionTiming` + termos P/I/D no `pid.py`: testado com planta simulada (22/10/2026); falta o hardware (`docs/testes.md` §7.1)
 - [x] ensaios, etapa 2: `pantilt_experiment` com o `experiment_recorder`: testado com planta simulada (22/10/2026); falta o hardware (`docs/testes.md` §7.2)
-- [ ] ensaios, etapa 3: imagens (snapshots e vídeo)
-- [ ] ensaios, etapa 4: bloco Ensaio na aba Inspeção da página
-- [ ] ensaios, etapa 5: `analisar_ensaios.py` (métricas e gráficos)
+- [X] ensaios, etapa 3: imagens (snapshots e vídeo)
+- [X] ensaios, etapa 4: bloco Ensaio na aba Inspeção da página
+- [x] ensaios, etapa 5: `analisar_ensaios.py` (métricas e gráficos)
 
 Atualize esta lista ao concluir cada item (o autor confirma).
 

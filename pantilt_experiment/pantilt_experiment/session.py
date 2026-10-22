@@ -1,8 +1,8 @@
 """
 Lógica das gravações do experiment_recorder sem dependência do ROS (testável
 isoladamente; docs/architecture.md, seção 4.11): rótulo e numeração das
-repetições, nomes das pastas, gatilhos de início e fim, desfecho, colunas dos
-CSVs, validação dos parâmetros e commit do repositório.
+repetições, nomes das pastas e dos snapshots, gatilhos de início e fim,
+desfecho, colunas dos CSVs, validação dos parâmetros e commit do repositório.
 """
 
 import os
@@ -15,9 +15,15 @@ import unicodedata
 MAX_LABEL_LEN = 40
 
 # Modos de imagem aceitos (docs/architecture.md, seção 4.11)
-IMAGE_MODES = ('none', 'snapshots', 'video')
-# Modos já implementados; snapshots e video entram na etapa 3
-IMAGE_MODES_AVAILABLE = ('none',)
+IMAGE_MODE_NONE = 'none'
+IMAGE_MODE_SNAPSHOTS = 'snapshots'
+IMAGE_MODE_VIDEO = 'video'
+IMAGE_MODES = (IMAGE_MODE_NONE, IMAGE_MODE_SNAPSHOTS, IMAGE_MODE_VIDEO)
+
+# Eventos dos snapshots (parte do nome do arquivo NN_<evento>.jpg)
+SNAP_START = 'inicio'        # cada entrada em CENTERING ou início do goal direto
+SNAP_CENTERED = 'centrado'   # primeiro centered=true da gravação
+SNAP_END = 'fim'             # último quadro, ao fechar a gravação
 
 # Estado do inspection_manager fora de inspeção
 STATE_IDLE = 'IDLE'
@@ -64,6 +70,7 @@ COLUMNS = {
     'cmd_auto': ('pan', 'tilt'),
     'cmd_mux': ('pan', 'tilt'),
     'events': ('source', 'event', 'detail'),
+    'video_frames': ('frame',),
 }
 
 
@@ -108,6 +115,11 @@ def final_basename(base: str, equipment: str, mode: str) -> str:
     return f'{base}_{clean_label(equipment) or SOURCE_DIRECT}_{mode}'
 
 
+def snapshot_name(seq: int, event: str) -> str:
+    """Nome do snapshot: NN_<evento>.jpg (NN = ordem na gravação, a partir de 1)."""
+    return f'{seq:02d}_{event}.jpg'
+
+
 def infer_mode(servo_mode, saw_tracking: bool) -> str:
     """
     Modo da gravação: pelo Center.Goal.mode visto no /control/servo_debug; sem
@@ -138,7 +150,7 @@ def outcome(source: str, center_goals: list, tracked: bool, interrupted: bool) -
 
 
 def validate_params(image_mode: str, pre_s: float, tail_s: float, min_free_gb: float,
-                    queue_size: int):
+                    queue_size: int, jpeg_quality: int, video_fps: float, fourcc: str):
     """Levanta ValueError se algum parâmetro do experiment_recorder for inválido."""
     check_image_mode(image_mode)
     if pre_s < 0.0:
@@ -149,16 +161,19 @@ def validate_params(image_mode: str, pre_s: float, tail_s: float, min_free_gb: f
         raise ValueError(f'min_free_gb={min_free_gb} inválido: não pode ser negativo')
     if queue_size < 1:
         raise ValueError(f'queue_size={queue_size} inválido: deve ser pelo menos 1')
+    if not 1 <= jpeg_quality <= 100:
+        raise ValueError(f'jpeg_quality={jpeg_quality} inválido: deve estar entre 1 e 100')
+    if video_fps <= 0.0:
+        raise ValueError(f'video_fps={video_fps} inválido: deve ser positivo')
+    if len(fourcc) != 4:
+        raise ValueError(f'fourcc="{fourcc}" inválido: deve ter 4 caracteres (ex.: "mp4v")')
 
 
 def check_image_mode(image_mode: str):
-    """Levanta ValueError se o modo de imagem for desconhecido ou ainda não implementado."""
+    """Levanta ValueError se o modo de imagem for desconhecido."""
     if image_mode not in IMAGE_MODES:
         raise ValueError(f'image_mode="{image_mode}" desconhecido (opções: '
                          f'{", ".join(IMAGE_MODES)})')
-    if image_mode not in IMAGE_MODES_AVAILABLE:
-        raise ValueError(f'image_mode="{image_mode}" ainda não implementado (disponível: '
-                         f'{", ".join(IMAGE_MODES_AVAILABLE)})')
 
 
 def free_gb(path: str) -> float:

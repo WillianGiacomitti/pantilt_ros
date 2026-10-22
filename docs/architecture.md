@@ -6,7 +6,10 @@ Este documento é a **fonte da verdade** para nomes de nós, tópicos, services,
 
 - **Autor:** Willian Luiz Giacomitti
 - **Orientador:** Prof. Dr. Ronnier Frates Rohrich
-- **Versão do documento:** 0.6 (22/10/2026): aquisição de dados dos ensaios (novo `experiment_recorder` no pacote `pantilt_experiment`, `/control/servo_debug` no `visual_servo_node`, `/perception/timing` no `detector_node`, métricas ampliadas na seção 10)
+- **Versão do documento:** 0.9 (22/10/2026): análise dos ensaios detalhada (seção 4.11: goal principal, janelas das métricas, formato do resumo, figuras e comando `analisar_ensaios`)
+  - 0.8 (22/10/2026): bloco Ensaio da página detalhado (seção 4.8)
+  - 0.7 (22/10/2026): imagens do `experiment_recorder` detalhadas (nomes e momentos dos snapshots, `video_frames.csv`, campo `imagens` no `resumo.json`)
+  - 0.6 (22/10/2026): aquisição de dados dos ensaios (novo `experiment_recorder` no pacote `pantilt_experiment`, `/control/servo_debug` no `visual_servo_node`, `/perception/timing` no `detector_node`, métricas ampliadas na seção 10)
   - 0.5 (08/10/2026): comportamento do `inspection_manager` detalhado (recusas do início, confirmação do alvo, uma passada de varredura, readquisição por perdas consecutivas, status)
   - 0.4 (08/10/2026): camada de controle e calibração (`CameraInfo` no `camera_node`, especificação completa do `visual_servo_node`, `/ptu/cmd_pos_auto` no `command_mux`, novo `calibration_node`, métricas precisadas)
   - 0.3 (02/10/2026): comportamento do `detector_node` detalhado (alvo só com filtro, quadros descartados, pesos locais) e `ListEquipment` lido só do yaml
@@ -327,7 +330,16 @@ A web usa services mais o tópico de status, e não actions diretamente, porque 
 
 A página também tem um painel de coleta de dataset (seção 4.9), que usa os services `/capture/*` e o tópico `/capture/status`.
 
-Na aba Inspeção, um bloco **Ensaio** configura o `experiment_recorder` (seção 4.11) pelo `/experiment/configure` (rótulo, observação e modo de imagem) e mostra pelo `/experiment/status` se a inspeção está sendo gravada, com o rótulo e o número da repetição.
+Na aba Inspeção, um bloco **Ensaio** configura o `experiment_recorder` (seção 4.11) pelo `/experiment/configure` (rótulo, observação e modo de imagem) e mostra pelo `/experiment/status` se a inspeção está sendo gravada, com o rótulo e o número da repetição:
+
+- **Formulário:** uma linha abaixo do formulário da inspeção, com rótulo, observação, modo de imagem e **Aplicar**.
+  - Os campos são preenchidos pelo status enquanto o operador não os edita. Assim, uma configuração feita pela CLI também aparece na página.
+  - Os campos ficam bloqueados durante a gravação, inclusive na cauda.
+  - Com mudanças não aplicadas, o **Iniciar** da inspeção aplica a configuração antes. Se ela for recusada, a inspeção não começa.
+- **Caixa Gravação:** fica ao lado das caixas de estado da inspeção. Parado, mostra a próxima repetição; gravando, a repetição atual e o tempo.
+- **Chip sobre o vídeo:** aparece no canto inferior direito durante a gravação, com rótulo, repetição e tempo.
+- **Avisos:** o fim de uma gravação (`Gravado: ...`) e uma gravação não iniciada viram um aviso temporário.
+- **Disponibilidade:** sem `/experiment/status` por 2 s, o bloco fica indisponível.
 
 ### 4.9 `capture_node` (pantilt_dataset)
 
@@ -477,7 +489,9 @@ O `/experiment/configure` define o **rótulo** do ensaio (ex.: `degrau_kp0.8`), 
 
 **Formato dos CSVs:** cabeçalho na primeira linha, separador vírgula, booleanos como `1`/`0` e números reais com 9 algarismos significativos (legível pelo `numpy.genfromtxt(..., delimiter=',', names=True)`). Os tempos são arredondados a 0,1 ms.
 
-**`resumo.json`:** rótulo, repetição, observação, equipamento, modo, modo de imagem, início e fim (absolutos), duração, desfecho com a última mensagem do `/inspection/status` (inspeção) ou do resultado da `Center` (goal direto), lista de goals `Center` e `Scan` com instantes e resultado completo, número de readquisições, `f_x` e `f_y` do `/camera/camera_info`, parâmetros de `visual_servo_node`, `inspection_manager`, `detector_node` e `scan_node` lidos no início (services `list_parameters`/`get_parameters` de cada nó; nó fora do ar fica registrado como ausente), o commit do `pantilt_ros` (hash, branch e se havia alterações locais em arquivos versionados; lido quando o nó sobe), o número de linhas de cada CSV e as linhas descartadas por fila cheia.
+**`resumo.json`:** rótulo, repetição, observação, equipamento, modo, modo de imagem, início e fim (absolutos), duração, desfecho com a última mensagem do `/inspection/status` (inspeção) ou do resultado da `Center` (goal direto), lista de goals `Center` e `Scan` com instantes e resultado completo, número de readquisições, `f_x` e `f_y` do `/camera/camera_info`, parâmetros de `visual_servo_node`, `inspection_manager`, `detector_node` e `scan_node` lidos no início (services `list_parameters`/`get_parameters` de cada nó; nó fora do ar fica registrado como ausente), o commit do `pantilt_ros` (hash, branch e se havia alterações locais em arquivos versionados; lido quando o nó sobe), o número de linhas de cada CSV, as linhas descartadas por fila cheia e o campo `imagens`. Esse campo traz:
+- `snapshots`: lista de `{arquivo, evento, t}`;
+- `video`: `{quadros, descartados, tamanho_diferente, erro}`, ou `null` fora do modo `video`.
 
 **Desfecho**, na ordem de prioridade:
 
@@ -496,10 +510,21 @@ O `/experiment/configure` define o **rótulo** do ensaio (ex.: `degrau_kp0.8`), 
 | Modo | Conteúdo | Custo |
 |---|---|---|
 | `none` | nenhuma imagem | zero: o nó não assina a imagem |
-| `snapshots` | JPEG do último quadro de `/perception/debug_image` na entrada em CENTERING (ou no início de um goal direto), no primeiro `centered=true` e no fim | o detector desenha a imagem de debug durante a gravação |
+| `snapshots` | JPEG do último quadro de `/perception/debug_image` em cada entrada em CENTERING (ou no início de um goal direto), no primeiro `centered=true` e no fim | o detector desenha a imagem de debug durante a gravação |
 | `video` | `video.mp4` com `/perception/debug_image` e `video_frames.csv` (índice do quadro × `header.stamp`, porque a taxa do detector varia) | idem, mais a codificação, numa thread própria (o `VideoRecorder` do `pantilt_dataset`) |
 
 A assinatura da imagem só existe durante a gravação, porque o `detector_node` só desenha a imagem de debug quando há assinante (seção 4.2). Com a página aberta, ele já desenha de qualquer forma. O `timing.csv` mostra se o modo escolhido derrubou a taxa do detector.
+
+**Snapshots:**
+
+- arquivos `NN_<evento>.jpg`, numerados na ordem da gravação:
+  - `inicio`: cada entrada em CENTERING, readquisições incluídas, ou o início do goal direto;
+  - `centrado`: o primeiro `centered=true` da gravação;
+  - `fim`: o último quadro, ao fechar a gravação, depois da cauda. Vale também para o Ctrl+C, para a falta de disco e para uma gravação nova que começa durante a cauda.
+- Se nenhum quadro tiver chegado no momento do evento, vale o **próximo** que chegar. Isso acontece porque a assinatura só nasce na abertura e o detector só passa a desenhar depois de descobri-la. Um `fim` sem nenhum quadro não gera arquivo.
+- Cada snapshot gera uma linha `gravador,snapshot,<arquivo>` no `events.csv`, com o `t` do quadro usado.
+
+**Vídeo:** o `video_frames.csv` tem as colunas `t`, `t_rx` e `frame` (índice do quadro no MP4, a partir de 0). Quadros descartados por fila cheia não entram nem no vídeo nem no CSV.
 
 #### Interface
 
@@ -530,7 +555,32 @@ A assinatura da imagem só existe durante a gravação, porque o `detector_node`
 
 #### Análise
 
-`pantilt_experiment/scripts/analisar_ensaios.py` (numpy e matplotlib, sem pandas) lê as pastas e gera em `<output_dir>/_analise/`: `metricas.csv` (uma linha por gravação, com as métricas da seção 10), `resumo_por_rotulo.csv` (média, desvio padrão, mínimo, máximo e taxa de sucesso por rótulo) e as figuras por gravação e comparativas entre rótulos (PNG e PDF).
+O comando `ros2 run pantilt_experiment analisar_ensaios [pasta] [--rotulos ...] [--sem-figuras]` lê as gravações e gera os resultados em `<pasta>/_analise/`. A pasta padrão é `/ros2_ws/ensaios`. O código fica nos módulos `analysis.py` (métricas, só numpy), `plots.py` (figuras, matplotlib) e `analisar_ensaios.py` (linha de comando) do pacote, sem pandas.
+
+O comando ignora as pastas que começam com `_` e as gravações sem `resumo.json` (ainda em andamento). Um erro numa gravação vira aviso e não interrompe as demais.
+
+**`metricas.csv`:** uma linha por gravação. Tem as colunas de contexto (rótulo, repetição, pasta, origem, equipamento, modo, desfecho, início, duração, modo de imagem, `controller`, ganhos `pan.kp/ki/kd` e `tilt.kp/ki/kd`, `f_x`, `f_y`) e as métricas da seção 10. Uma métrica que não se aplica, ou que não pôde ser calculada, fica vazia (NaN).
+
+- **Goal principal:** é o goal `Center` da primeira convergência (o primeiro com `centered=true` no `center_feedback.csv`); se nenhum convergiu, é o primeiro goal. Desse goal saem `t_c`, `e_r`, `M_p`, IAE e `e_d`. Readquisições e sucesso valem para a gravação inteira.
+- **Segmento:** são as linhas do `servo.csv` com `t_rx` entre o início e o fim do goal no `resumo.json`; o `servo.csv` não tem a identificação do goal. O `center_feedback.csv` tem essa identificação (coluna `goal`) e é filtrado por ela. `t0` é a primeira linha do segmento com `target_visible=1`, pelo `t` (primeira detecção válida).
+- **`t_c` e `e_r`:** são os do resultado do goal, se ele convergiu; senão, NaN (o 0 do `Center.Result` não é usado). A janela de permanência começa em `t0 + t_c`.
+- **IAE:** é calculado só com as linhas visíveis, de `t0` ao início da permanência (CENTER que convergiu) ou ao fim do segmento (TRACK, ou CENTER sem convergência).
+- **`M_p`:** é calculado de `t0` ao primeiro `centered=1` (ou ao fim do segmento). A porcentagem é NaN quando `|θ0| < 1°`, porque num eixo quase sem erro inicial ela só mediria ruído.
+- **`t_b` e `t_i`:** só valem para inspeções. O início é o primeiro evento `inspecao` diferente de IDLE no `events.csv`.
+
+**`resumo_por_rotulo.csv`:** formato longo, com uma linha por rótulo e métrica, nas colunas `rotulo`, `metrica`, `n`, `media`, `desvio` (amostral), `minimo` e `maximo`. A métrica `sucesso` tem como média a taxa de sucesso. As gravações com desfecho `interrompido` (Ctrl+C ou disco) ficam no `metricas.csv`, mas não entram no resumo; a contagem delas aparece na métrica `interrompidas`.
+
+**Figuras:** PNG e PDF, com 16 cm de largura, textos em português e vírgula decimal.
+
+- `figuras/<rótulo>/<pasta>.png|pdf`, uma por gravação com `servo.csv`. São quatro painéis com o tempo compartilhado:
+  - erro em px, com a faixa de tolerância nas inspeções;
+  - `θ` em graus;
+  - comando em °/s, com as amostras saturadas marcadas;
+  - juntas em graus.
+
+  Linhas verticais marcam o início dos goals, `t0`, o início da permanência e o primeiro `centered`.
+- `figuras/comparativo_metricas.png|pdf`: boxplots por rótulo de `t_c`, `e_r`, IAE, `M_p` (o maior dos dois eixos, em graus) e `e_d`, mais a taxa de sucesso.
+- `figuras/comparativo_respostas.png|pdf`: `error_px` × tempo desde `t0` no goal principal, com as repetições sobrepostas e um painel por rótulo.
 
 ---
 
@@ -715,11 +765,11 @@ A telemetria é enviada a 20 Hz. O fail-safe do firmware para os motores após 5
 | Erro residual *e_r* | `Center.Result.final_error_px` | **média** de `error_px` durante esse intervalo de permanência (menos sensível ao tremor da bbox que o último valor) |
 | Erro de rastreamento *e_d* | `center_feedback.csv` (`Center.Feedback.error_px`) | média de `error_px` no feedback, em modo TRACK, durante as oscilações da base: do primeiro `centered=true` ao fim do goal, só com `target_visible=true` |
 
-Métricas complementares, calculadas pelo `analisar_ensaios.py` a partir das pastas do `experiment_recorder` (seção 4.11):
+Métricas complementares, calculadas pelo `analisar_ensaios` a partir das pastas do `experiment_recorder` (seção 4.11):
 
 | Métrica | Origem | Definição operacional |
 |---|---|---|
-| Sobressinal *M_p* (por eixo) | `servo.csv` (`theta_*`) | maior `\|θ\|` depois do primeiro cruzamento de zero (troca de sinal em relação ao erro inicial), em graus e em % do `\|θ\|` inicial; 0 se não houve cruzamento |
+| Sobressinal *M_p* (por eixo) | `servo.csv` (`theta_*`) | maior `\|θ\|` com sinal oposto ao do erro inicial (depois do primeiro cruzamento de zero), em graus e em % do `\|θ\|` inicial; 0 se não houve cruzamento |
 | IAE | `servo.csv` (`error_px`) | integral de `\|error_px\|` no tempo (regra do trapézio sobre o `header.stamp`), da primeira detecção válida do goal até o início da janela de permanência (CENTER) ou até o fim (TRACK), em px·s |
 | Tempo de busca *t_b* | `events.csv` | do início da inspeção (saída do IDLE) à primeira entrada em CENTERING |
 | Tempo total *t_i* | `events.csv` + `servo.csv` | do início da inspeção ao primeiro `centered=true` |
