@@ -18,7 +18,7 @@ O projeto tem três repositórios:
 
 - ROS 2 Humble, rodando em Docker (osrf/ros:humble-desktop) sobre Windows/WSL2.
 - Tudo em Python (rclpy). A única exceção é `pantilt_interfaces`, que é ament_cmake por exigência do rosidl.
-- Detecção: Ultralytics YOLO (`yolo11n`). Classes identificadas por NOME (`model.names`), nunca por ID numérico.
+- Detecção: Ultralytics YOLO. Modelo do TCC em `/ros2_ws/models/equipment.pt` com o `equipment.yaml`; `yolo11n.pt` (COCO) com o `equipment_coco_test.yaml` só para teste. Classes identificadas por NOME (`model.names`), nunca por ID numérico.
 - `numpy<2`, obrigatório para não quebrar o `cv_bridge` do Humble.
 
 ## Regras de trabalho
@@ -29,9 +29,10 @@ O projeto tem três repositórios:
 4. **Não adicione dependências** (apt, pip, package.xml) sem perguntar.
 5. **Uma tarefa = um nó ou uma funcionalidade.** Não implemente vários nós de uma vez.
 6. Comentários, docstrings e mensagens de log em **português**.
-7. Unidades SI nos tópicos (rad, rad/s). Graus só em parâmetros com sufixo `_deg`.
+7. Unidades SI nos tópicos (rad, rad/s). Graus só com sufixo `_deg` (architecture.md §2, princípio 6).
 8. Todo parâmetro é declarado com `declare_parameter` e tem valor padrão documentado no `params.yaml`.
-9. Ao terminar, explique o que foi feito arquivo por arquivo e como testar manualmente (comandos `ros2 run`, `ros2 topic echo`, `ros2 action send_goal`).
+9. Lógica pura fora dos nós, em módulos com pytest (ex.: `scan_pattern.py`, `state_machine.py`).
+10. Ao terminar, explique o que foi feito arquivo por arquivo e como testar manualmente (comandos `ros2 run`, `ros2 topic echo`, `ros2 action send_goal`).
 
 ## Comandos (dentro do container)
 
@@ -39,241 +40,98 @@ O projeto tem três repositórios:
 ws                                   # alias: cd /ros2_ws + source do ROS e do install/
 colcon build --symlink-install && ws
 
-# testes por camada (launch files em pantilt_bringup)
+# sistema completo (docs/testes.md §6.2); hardware:=false, web:=false, recorder:=false desligam partes
+ros2 launch pantilt_bringup system.launch.py                 # inspeção
+ros2 launch pantilt_bringup system.launch.py mode:=dataset   # coleta (o mesmo que o dataset.launch.py)
+
+# por camada
 ros2 launch pantilt_bringup hardware.launch.py      # serial_bridge_node + command_mux
+ros2 launch pantilt_bringup perception.launch.py    # camera_node + detector_node
 ros2 launch pantilt_bringup control.launch.py       # scan_node + visual_servo_node
 ros2 launch pantilt_web web.launch.py               # página (8080), rosbridge (9090), web_video_server (8081)
-ros2 launch pantilt_bringup dataset.launch.py       # coleta: câmera + capture_node (+ hardware, controle e web)
-ros2 launch pantilt_bringup perception.launch.py    # camera_node + detector_node (pesos em /ros2_ws/models)
 ros2 run pantilt_manager inspection_manager --ros-args \
-  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml   # gerenciador sozinho
+  --params-file /ros2_ws/src/pantilt_ros/pantilt_bringup/config/params.yaml
 
-# sistema completo em um comando (docs/testes.md §6.2); hardware:=false, web:=false desligam partes
-ros2 launch pantilt_bringup system.launch.py                 # inspeção: tudo acima + gerenciador
-ros2 launch pantilt_bringup system.launch.py mode:=dataset   # coleta: o mesmo que o dataset.launch.py
-
-# ensaios: o system.launch.py já sobe o experiment_recorder (recorder:=false desliga)
+# ensaios (o system.launch.py já sobe o experiment_recorder)
 ros2 service call /experiment/configure pantilt_interfaces/srv/ConfigureExperiment \
   "{label: 'degrau_kp0.8', notes: '', image_mode: 'none'}"   # gravações em /ros2_ws/ensaios/<rótulo>/
+ros2 run pantilt_experiment analisar_ensaios                 # métricas e figuras em /ros2_ws/ensaios/_analise/
 
-# conferir interfaces
-ros2 interface show pantilt_interfaces/action/Center
+# testes da lógica pura
+python3 -m pytest pantilt_control/test pantilt_manager/test   # (a partir de /ros2_ws/src/pantilt_ros)
 ```
 
-## Estrutura planejada
+## Estrutura
 
 ```
 pantilt_interfaces/   msg, srv, action (ament_cmake)
-pantilt_hardware/     serial_bridge_node, command_mux
+pantilt_hardware/     serial_bridge_node, command_mux (+ command_arbiter.py, limits.py, serial_protocol.py)
 pantilt_perception/   camera_node, detector_node, calibration_node
-pantilt_control/      scan_node, visual_servo_node, visual_servo_math.py,
-                      controllers/{base,pid,fuzzy}.py
-pantilt_manager/      inspection_manager, state_machine.py
-pantilt_web/          web/index.html + launch (http, rosbridge, web_video_server)
-pantilt_bringup/      launch/, config/{params.yaml, equipment.yaml, equipment_coco_test.yaml,
-                      camera_intrinsics.yaml}
-pantilt_dataset/      capture_node (ferramenta auxiliar: vídeos para o dataset)
-pantilt_experiment/   experiment_recorder, session.py, csv_writer.py (ensaios do TCC: CSV + JSON por inspeção)
-docs/                 architecture.md (fonte da verdade), testes.md (roteiros de teste por pacote),
-                      ajustes_pantilt_dockerfile.md, diagnostico_encoders.md (histórico),
-                      SerialProtocol.h (cópia do protocolo do firmware)
+                      (+ camera_source.py, camera_info_file.py, detection.py, calibration_math.py)
+pantilt_control/      scan_node, visual_servo_node (+ scan_pattern.py, visual_servo_math.py,
+                      controllers/{base,pid,fuzzy}.py)
+pantilt_manager/      inspection_manager (+ state_machine.py)
+pantilt_web/          web/index.html + js/ + launch (http, rosbridge, web_video_server)
+pantilt_bringup/      launch/{system,hardware,perception,control,dataset}.launch.py,
+                      config/{params.yaml, equipment.yaml, equipment_coco_test.yaml,
+                      camera_intrinsics.yaml, fastdds.xml}
+pantilt_dataset/      capture_node (auxiliar: vídeos para o dataset)
+pantilt_experiment/   experiment_recorder (auxiliar: ensaios) + session.py, csv_writer.py,
+                      snapshot_writer.py; análise: analysis.py, plots.py, analisar_ensaios.py
+docs/                 architecture.md (fonte da verdade), testes.md (roteiros de teste),
+                      ajustes_pantilt_dockerfile.md, SerialProtocol.h (cópia do protocolo do firmware)
 ```
 
-## Estado atual
+`calibration_node`, `capture_node` e `experiment_recorder` são auxiliares ao desenvolvimento e ficam fora do diagrama da arquitetura.
 
-- [X] `pantilt_interfaces`: definições criadas (validar com `colcon build`)
-- [X] `pantilt_hardware`: migrar `serial_bridge_node.py` do repo `pantilt_dockerfile`
-- [x] `pantilt_hardware`: `command_mux`
-- [x] `pantilt_web`: migrar `index.html` e adicionar vídeo, seleção e status
-- [x] `pantilt_perception`: `camera_node`
-- [x] `pantilt_perception`: `detector_node`
-- [x] `pantilt_web`: testar com a camera (`docs/testes.md` §2 e §3)
-- [x] `pantilt_control`: `scan_node`: testado com juntas simuladas e no hardware (29/09/2026); melhorias de `docs/diagnostico_encoders.md` §4 pendentes
-- [x] `pantilt_interfaces`: `StartCapture.srv` e `CaptureStatus.msg`
-- [X] `pantilt_dataset`: `capture_node`
-- [x] `pantilt_web`: painel de coleta de dataset e `dataset.launch.py`: testado no hardware (02/10/2026)
-- [x] `pantilt_hardware`: `/ptu/cmd_pos_auto` no `command_mux` (tarefa A)
-- [x] `pantilt_perception`: `CameraInfo` no `camera_node` (tarefa A)
-- [x] `pantilt_perception`: `calibration_node`: rodado no hardware (08/10/2026); valores sob suspeita, ver tarefa B (tarefa A)
-- [ ] **calibração de referência da câmera e conferência dos encoders** (tarefa B, adiada; não bloqueia E)
-- [x] `pantilt_control`: `controllers/{base,pid}.py` com pytest (tarefa C)
-- [x] `pantilt_control`: `visual_servo_node`: testado com planta simulada e no hardware (08/10/2026) (tarefa D)
-- [ ] `pantilt_control`: teste de sinais e sintonia no hardware (tarefa E)
-- [x] `pantilt_manager`: `inspection_manager`: `state_machine.py` com pytest; testado com planta simulada e no hardware (08/10/2026)
-- [x] `pantilt_web`: testar com a inspecao
-- [x] `pantilt_bringup`: launch files e config (feitos: `hardware.launch.py`, `control.launch.py`, `dataset.launch.py`, `perception.launch.py`; falta `system`)
-- [ ] `pantilt_control`: `controllers/fuzzy.py` (depois; a interface já deve estar pronta)
-- [x] ensaios, etapa 0: contrato na `architecture.md` v0.6 (§4.11, §10)
-- [x] ensaios, etapa 1: `ServoDebug`/`DetectionTiming` + termos P/I/D no `pid.py`: testado com planta simulada (22/10/2026); falta o hardware (`docs/testes.md` §7.1)
-- [x] ensaios, etapa 2: `pantilt_experiment` com o `experiment_recorder`: testado com planta simulada (22/10/2026); falta o hardware (`docs/testes.md` §7.2)
-- [X] ensaios, etapa 3: imagens (snapshots e vídeo)
-- [X] ensaios, etapa 4: bloco Ensaio na aba Inspeção da página
-- [x] ensaios, etapa 5: `analisar_ensaios.py` (métricas e gráficos)
+## Estado atual (23/10/2026)
+
+Todos os nós da arquitetura estão implementados e testados no hardware: hardware, percepção, calibração, `scan_node`, `visual_servo_node` (PID; fuzzy só com pytest), `inspection_manager`, web, `system.launch.py`, coleta de dataset, `experiment_recorder` (com imagens e bloco Ensaio na página) e `analisar_ensaios`.
+
+Pendências:
+
+- [ ] **Tarefa E: sinais, sintonia e ensaios** (em espera; o autor sintoniza com o sistema completo). Roteiro em `docs/testes.md` §4.2:
+  1. com `kp = 0.2` e `ki = kd = 0`, confirmar o sentido de giro e registrar `invert_pan`/`invert_tilt` na §4.2 (hoje `false`/`true` no `params.yaml`, já centralizou na inspeção), com a mão no botão de parada;
+  2. subir `kp` até 0,8–1,0 e observar sobressinal e oscilação;
+  3. ativar `ki` só no ensaio com alvo em movimento;
+  4. registrar em `docs/testes.md` §4.2: sinais, CENTER, TRACK, alvo perdido, cancelamento, prioridade do operador e limite de ângulo;
+  5. gravar os ensaios com o `experiment_recorder`, um rótulo por configuração de ganhos (§7.2).
+- [ ] Sinais de diagnóstico e `experiment_recorder` no hardware (`docs/testes.md` §7.1 e §7.2; testados só com planta simulada).
+- [x] `controllers/fuzzy.py` (Sugeno de ordem zero, architecture.md §4.5), com pytest em `test_fuzzy.py`; falta o teste funcional com `controller: fuzzy` (goal `Center` direto: log `Controlador fuzzy`, P/I/D zerados no `/control/servo_debug`). A partir daqui o código congela: só entram correções que impeçam um ensaio de rodar.
+- [ ] Remover do `serial_protocol.py` (e do `SerialProtocol.h`) o legado de encoder e auto home quando o firmware for limpo (architecture.md §8).
+- [ ] `.gitignore` não cobre os `.pytest_cache` dos pacotes.
 
 Atualize esta lista ao concluir cada item (o autor confirma).
 
 ## Decisões de projeto JÁ FECHADAS (não reabrir)
 
-Fundamentação completa em `docs/architecture.md` §4.5 e na seção teórica da monografia.
+Fundamentação em `docs/architecture.md` (§4.3, §4.5, §4.10) e na seção teórica da monografia.
 
-1. **Entrada do controlador: erro ANGULAR**, não erro em pixel. O nó converte
-   `θ = atan(e_px / f)` antes do controlador. Motivo: o fator `(1+x²)` da matriz de
-   interação é exatamente a derivada da tangente, então a mudança de variável lineariza
-   a planta de forma exata e torna os ganhos independentes de resolução e lente.
+1. **Entrada do controlador: erro ANGULAR**, `θ = atan(e_px / f)`, não erro em pixel. O fator `(1+x²)` da matriz de interação é a derivada da tangente: a planta fica linear e os ganhos independem de resolução e lente.
 2. **Saída: velocidade angular** (rad/s) em `/ptu/cmd_vel_auto`.
-3. **Dois controladores SISO** independentes: pan recebe o erro horizontal, tilt o vertical.
-   Não há inversão de matriz no código; a geometria vira `invert_pan` / `invert_tilt`.
-4. **Unidades dos ganhos:** `K_p` [s⁻¹], `K_i` [s⁻²], `K_d` [adimensional].
-   `K_p` equivale ao ganho λ do IBVS. Teto teórico ~3 s⁻¹ (margem de fase de 60° com
-   165 ms de atraso); começar entre 0,5 e 1,0.
-5. **`f_x` e `f_y` vêm de `/camera/camera_info`**, publicado pelo `camera_node`.
-   Nunca como parâmetro do `visual_servo_node` nem como constante no código.
-6. **Publicação desacoplada:** o servo publica a 20 Hz repetindo o último comando por
-   até `cmd_hold_s` (0,25 s), porque o detector roda a ~10 Hz e o `command_mux` zera
-   a velocidade após 0,3 s sem comando.
-7. **Métricas:** `t_c` é contado da primeira detecção válida até o erro entrar e
-   permanecer na tolerância por `hold_time_s`; `e_r` é a média do erro nesse intervalo
-   de permanência, não o último valor.
-8. **Fuzzy fica para depois**, mas a troca precisa ser trivial: parâmetro `controller`
-   e interface comum `compute(erro, dt) -> velocidade` definida em `controllers/base.py`.
-   Implementar agora só o PID, com a fábrica já preparada para o segundo método.
-
-## Ponto atual e próximos passos (08/10/2026)
-
-**Feito:** percepção completa e testada no hardware (`perception.launch.py`), `yolo11n` em CPU
-com o `equipment_coco_test.yaml`. Medidas de referência (`docs/testes.md` §2.2): `imgsz` 640 →
-~10 quadros/s e ~115 ms de atraso; inferência pura 640 = 73 ms, 480 = 46 ms, 320 = 32 ms.
-
-A malha de controle depende da distância focal em pixels, por isso a calibração entrou ANTES
-do `visual_servo_node`. As tarefas abaixo são sequenciais; uma por sessão (C e D foram feitas
-juntas, com o pytest do C como portão antes do nó).
-
-### Tarefa A — CONCLUÍDA (08/10/2026)
-
-`architecture.md` v0.4 (patch de controle aplicado; o `calibration_node` é a §4.10), `/ptu/cmd_pos_auto`
-no `command_mux` (§4.6), `CameraInfo` no `camera_node` (§4.1) e `calibration_node` (§4.10).
-Roteiros em `docs/testes.md` §1.4, §2.1 e §2.3. Lógica pura com pytest em `camera_info_file.py`
-e `calibration_math.py`.
-
-Decisões tomadas durante a tarefa (já registradas na §4.10, não reabrir):
-- `c_x`, `c_y` fixos no centro geométrico: sob rotação pura o ponto principal não é observável
-  (simulação: ±30 px de incerteza e `f` pior quando livre);
-- ajuste por Levenberg-Marquardt em numpy, sem scipy;
-- o nó publica só posição, nunca velocidade; se o operador assumir ou o nó for encerrado
-  (Ctrl+C), NÃO volta ao *home*; nas demais saídas, volta;
-- arquivo de intrínsecos ausente ou inválido → `CameraInfo` com `K` zerada, imagem continua.
-
-### Tarefa B — calibração de referência e conferência dos encoders (ADIADA)
-
-Resultado do `calibration_node` no hardware (08/10/2026), já gravado em
-`config/camera_intrinsics.yaml`: `fx = 859.8` px (RMS 0,50 px), `fy = 991.3` px (RMS 0,90 px);
-pan+ leva o alvo para a esquerda, tilt+ para baixo. Resíduos baixos, mas `fy/fx = 1,15`, e
-uma webcam com pixel quadrado deveria dar `fx ≈ fy`.
-
-Diagnóstico até aqui:
-- **Paralaxe descartada:** a lente fica 10 mm à frente do eixo do pan (e 120 mm ao lado) e
-  12 mm à frente do eixo do tilt (e 35 mm acima). Só o deslocamento à frente pesa:
-  `f_medido ≈ f·(1 + d/Z)`, ~1% a 1 m;
-- sobram duas suspeitas: **escala errada no encoder de um eixo** (provavelmente o tilt; afetaria
-  também os limites do bridge e a varredura) ou **pixel não quadrado**.
-
-Caminho combinado (o autor decide quando):
-1. calibração por tabuleiro de xadrez (OpenCV, script offline, sem dependência nova), em
-   640×480 MJPG como no `camera_node`; o resultado vira o `camera_intrinsics.yaml`;
-2. conferir o encoder do tilt (e do pan) com referência externa (ex.: inclinômetro no celular);
-3. `f_tabuleiro / f_rotação` por eixo mede o erro de escala do encoder: o `calibration_node`
-   passa a servir para conferir o mecanismo;
-4. corrigir a doc: §4.10 (a rotação pura exige o centro óptico no eixo ou `d/Z` pequeno) e
-   `testes.md` §2.3 (hoje sugere alvo a 1–3 m; preferir 2 m ou mais).
-
-C, D e E seguem com os valores atuais: um `f` impreciso só muda o ganho efetivo da malha,
-compensado na sintonia (tarefa E).
-
-### Tarefas C e D — CONCLUÍDAS (08/10/2026)
-
-`controllers/base.py` (interface `Controlador` + `criar_controlador()`), `controllers/pid.py`,
-`visual_servo_math.py` (conversão, `dt`, `Supervisor` com critérios e métricas) e
-`visual_servo_node.py` (§4.5), com pytest em `test_pid.py` e `test_visual_servo_math.py`.
-Testado com planta simulada (scratchpad) e no hardware. Roteiro em `docs/testes.md` §4.2.
-
-Decisões tomadas durante as tarefas (já registradas na §4.5 ou no código, não reabrir):
-- **preso no limite** = eixo parado em `/joint_states` (< 0,2°) com comando ≥ 1°/s no mesmo
-  sentido por `limit_timeout_s`. O nó não conhece os limites do bridge (§4.5 ajustada);
-  sem `/joint_states` recente, a checagem fica desligada;
-- convenção de sinal: `comando = PID(θ)`, e `invert_*` nega o eixo;
-- integral guardado já como contribuição na saída (rad/s); congela só quando a saída satura e
-  o erro empurra no mesmo sentido (desacumula assim que o erro inverte);
-- derivada do erro filtrado em 1ª ordem (com referência zero, equivale à derivada da medida);
-  a primeira amostra após `reset()` só inicializa o filtro;
-- `dt` pelos `header.stamp` dos alvos válidos; lacuna acima de 0,5 s → `reset()` dos
-  controladores;
-- `f_x`, `f_y` lidos no início de cada goal; `t_c` vai até o início da janela de permanência;
-  o prazo de perda conta da captura do último alvo válido;
-- um feedback por alvo recebido (base do `e_d` no bag); no TRACK e nos abortos, o resultado
-  traz as métricas da primeira convergência (0 se não houve);
-- `max_vel_deg_s` limitado a (0, 30]°/s, o mesmo teto do `scan_node`.
-
-### Tarefa E — sinais, sintonia e ensaios
-
-Roteiro de base: `docs/testes.md` §4.2.
-
-1. Com `kp = 0.2` e `ki = kd = 0`, verificar o sentido de giro e fixar
-   `invert_pan` / `invert_tilt` no `params.yaml` (hoje `invert_pan = false` e
-   `invert_tilt = true`, como a calibração previa; a inspeção já centralizou com eles, mas
-   falta o registro formal na §4.2). Fazer isso com a mão no botão de parada.
-2. Subir `kp` até 0,8–1,0; observar sobressinal e oscilação.
-3. Ativar `ki` só depois, no ensaio com alvo em movimento.
-4. Registrar em `docs/testes.md` §4.2 os resultados: sinais, CENTER, TRACK, alvo perdido,
-   cancelamento, prioridade do operador e comportamento no limite de ângulo.
-5. Gravar os ensaios com o `experiment_recorder` (um rótulo por configuração de ganhos,
-   `docs/testes.md` §7.2) para os gráficos do TCC.
-
-A tarefa E está **em espera**: o autor sintoniza quando o sistema completo estiver funcionando.
-Até lá, os demais itens usam os ganhos atuais do `params.yaml`.
-
-### `inspection_manager` — CONCLUÍDO (08/10/2026)
-
-`architecture.md` v0.5 (§4.3 com o comportamento detalhado e §6 ajustada), comentário do
-`ListEquipment.srv` corrigido (lista só o yaml), pacote `pantilt_manager` com `state_machine.py`
-(lógica pura, `InspectionMachine` devolve ações para o nó executar) + `test_state_machine.py`, e
-`inspection_manager.py`. Feito em duas etapas, com o pytest como portão. Testado com planta
-simulada (scratchpad; `scan_node`, `visual_servo_node` e `command_mux` reais) e no hardware.
-Roteiro em `docs/testes.md` §6.1 (as seções seguintes do `testes.md` viraram §7 e §8).
-
-Decisões tomadas durante a tarefa (já registradas na §4.3/§6, não reabrir):
-- o `/inspection/start` espera a resposta do `set_target` (até 2 s) e repassa a recusa do
-  detector; recusa também com servidor fora do ar, chave desconhecida ou operador no controle;
-- confirmação: `confirm_frames` alvos **consecutivos**, com a chave da inspeção e `header.stamp`
-  posterior à resposta do `set_target`;
-- **uma passada** de varredura por SEARCHING; terminou sem confirmar → IDLE ("alvo não encontrado");
-- só a `Center` abortada com `alvo perdido` leva a nova varredura (o `Center.Result` não tem
-  código de motivo; o gerenciador compara o texto, `LOST_MESSAGE` em `state_machine.py`);
-  `max_reacquire` conta perdas **consecutivas**, zeradas a cada `centered=true`; outros abortos → IDLE;
-- STOP e qualquer jog da página abortam a inspeção (um zero da web também passa a fonte a `web`);
-- `equipment_file` igual ao do `detector_node` (hoje o `equipment_coco_test.yaml`).
-
-**Próximos passos**, na ordem da §12 do `architecture.md`: teste da inspeção pela página,
-`system.launch.py`, tarefa E (sintonia), `controllers/fuzzy.py` e scripts de ensaio.
-
-**Pendências sem prazo:**
-- melhorias do `scan_node` em `docs/diagnostico_encoders.md` §4;
-- `.gitignore` não cobre os `.pytest_cache` de `pantilt_control`, `pantilt_hardware` e
-  `pantilt_perception`.
+3. **Dois controladores SISO** independentes (pan ← erro horizontal, tilt ← vertical). Sem inversão de matriz; a geometria vira `invert_pan`/`invert_tilt`.
+4. **Ganhos:** `K_p` [s⁻¹] (≡ λ do IBVS; teto teórico ~3 s⁻¹ com 165 ms de atraso), `K_i` [s⁻²], `K_d` [adimensional].
+5. **`f_x` e `f_y` vêm de `/camera/camera_info`**, nunca como parâmetro nem constante.
+6. **Publicação desacoplada:** servo a 20 Hz repetindo o último comando por até `cmd_hold_s` (detector ~10 Hz, watchdog do mux 0,3 s).
+7. **Métricas:** `t_c` da primeira detecção válida até o erro entrar e permanecer na tolerância por `hold_time_s`; `e_r` é a média nessa janela.
+8. **Calibração por rotação:** `c_x`, `c_y` fixos no centro geométrico; Levenberg-Marquardt em numpy (sem scipy); só comandos de posição; não volta ao *home* se o operador assumir ou com Ctrl+C.
+9. **Fuzzy:** Sugeno de ordem zero, 5×3 = 15 regras, sem ação integral e sem parâmetro ROS novo. `kp` é o fator de escala (`erro_max = max_output/kp`): com tabela linear, o fuzzy é exatamente o P. A tabela de regras só muda se os ensaios mostrarem necessidade.
+10. **Readquisição:** só a `Center` abortada com o texto `alvo perdido` (`LOST_MESSAGE` em `state_machine.py`) leva a nova varredura; STOP e qualquer jog da página abortam a inspeção.
 
 ## Armadilhas conhecidas
 
-- **Webcam no WSL2:** no ambiente atual (kernel WSL 6.18) o driver UVC funciona: a câmera USB, anexada com `usbipd`, aparece como `/dev/video0` no container e entrega 640×480 MJPG a até 30 fps (menos com pouca luz, por causa da exposição automática). Use `source: "0"`. Em kernels sem UVC, o `camera_node` também aceita URL como `source` (stream MJPEG do Windows).
-- **Imagens via DDS:** o SHM padrão do Fast DDS (512 KB) não comporta uma imagem 640×480 (921 KB). Sem ajuste, os quadros vão por UDP e se perdem em BEST_EFFORT. Todo processo ROS precisa de `FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/src/pantilt_ros/pantilt_bringup/config/fastdds.xml` e o container precisa de `/dev/shm` bem maior que 64 MB (ver `docs/ajustes_pantilt_dockerfile.md`). O `web_video_server` só recebe tópicos BEST_EFFORT com `qos_profile=sensor_data` na URL do stream, e não decodifica `%2F`: o tópico vai na URL com `/` literal.
-- **Portas da web:** o docker-compose do `pantilt_dockerfile` publica só 8080 (página), 9090 (rosbridge) e 8081 (web_video_server). Esses são os padrões do `web.launch.py` e do `config.js`. Uma porta fora dessa lista funciona dentro do container (`curl`), mas não chega ao navegador do Windows.
-- **Heartbeat serial:** o fail-safe do firmware é de 500 ms. O heartbeat do bridge deve ser de 5 Hz, nunca 2 Hz.
-- **Protocolo serial:** definido em `pantilt_firmware/include/Serialprotocol.h`. Não altere tipos ou payloads sem alterar o firmware.
-- **rosbridge + actions:** a web não usa actions diretamente; usa os services `/inspection/*` e o tópico `/inspection/status`.
-- **Pesos `.pt`** não vão para o git (ver `.gitignore`). Ficam em `/ros2_ws/models/`; o `detector_node` não baixa nada (comando de download em `docs/testes.md` §2.2).
-- **Detector só em CPU:** o container não tem CUDA e o WSL tem ~3,7 GB de RAM. O `detector_node` processa ~10 quadros/s a `imgsz` 640 e descarta de propósito os quadros que chegam durante a inferência. Toda malha que depende de `/perception/target` roda nessa taxa, com ~115 ms de atraso.
-- **`f_x` depende da resolução:** vale para a resolução em que o centro da bbox é reportado. Se o `camera_node` mudar de resolução, a calibração precisa ser refeita. Trocar de câmera (OAK-D) invalida a calibração.
-- **Atraso da imagem em rotinas que movem os eixos:** depois de mover, espere o eixo parar E descarte os alvos com `header.stamp` anterior à parada. Sem isso, calibração e medidas ficam enviesadas.
-- **Telemetria = encoders:** a posição em `/joint_states` vem dos encoders AS5600, não da contagem de passos. Um encoder ruim produz um ângulo falso e plausível, e os limites do bridge e o `scan_node` confiam nele. Antes de qualquer malha fechada, confira `/joint_states` com jog curto (`docs/testes.md` §1.2).
-- **Ctrl+C em nós com `SignalHandlerOptions.NO`:** o `KeyboardInterrupt` só chega quando a thread principal volta ao Python. Um `executor.spin()` sem timer fica bloqueado em C, e o nó não sai. Use laço com `spin_once(timeout_sec=0.1)`, como no `scan_node`.
-- **Futures fora dos callback groups:** no rclpy do Humble, os callbacks de `add_done_callback` (resposta e resultado de goals, resposta de services) rodam como tasks do executor, sem respeitar os callback groups. Com `MultiThreadedExecutor`, eles concorrem com as assinaturas e os timers: proteja o estado com um lock, como no `inspection_manager`.
-- **CLI do ROS lenta:** no volume 9p, um `ros2 topic echo`/`hz` leva vários segundos para começar a receber. Timeouts curtos dão falsa impressão de tópico mudo; para medir, prefira um script `rclpy` ou espere mais.
-- **Coleta de dataset e disco:** `/ros2_ws` é o `C:` do Windows, com pouco espaço livre. Nunca grave imagens cruas com `ros2 bag` por longos períodos (~20 MB/s); a coleta usa MP4.
+- **Telemetria = contagem de passos:** não há encoder nem auto home. A posição em `/joint_states` é a contagem de passos do firmware, relativa ao zero manual (`/ptu/set_zero` com o mecanismo no centro mecânico). Um passo perdido desloca a posição sem aviso, e os limites do bridge e do firmware, o `scan_node` e a calibração confiam nela. Um eixo travado mecanicamente não aparece em `/joint_states`. Antes de malha fechada, confira com jog curto (`docs/testes.md` §1.2).
+- **Webcam no WSL2:** com o kernel WSL 6.18 o UVC funciona: a câmera USB (anexada com `usbipd`) aparece como `/dev/video0` e entrega 640×480 MJPG a até 30 fps. Use `source: "0"`. Sem UVC, o `camera_node` aceita URL (stream MJPEG do Windows).
+- **Imagens via DDS:** o SHM padrão do Fast DDS (512 KB) não comporta 640×480 (921 KB). Todo processo ROS precisa de `FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/src/pantilt_ros/pantilt_bringup/config/fastdds.xml` e o container de `/dev/shm` bem maior que 64 MB (`docs/ajustes_pantilt_dockerfile.md`). O `web_video_server` só recebe tópicos BEST_EFFORT com `qos_profile=sensor_data` na URL, e o tópico vai com `/` literal (não decodifica `%2F`).
+- **Portas da web:** o docker-compose publica só 8080, 9090 e 8081. Outra porta funciona dentro do container, mas não chega ao navegador do Windows.
+- **Heartbeat serial:** o fail-safe do firmware é de 500 ms; o heartbeat do bridge deve ser 5 Hz, nunca 2 Hz.
+- **Protocolo serial:** definido em `pantilt_firmware/include/Serialprotocol.h` (cópia em `docs/SerialProtocol.h`). Não altere tipos ou payloads sem alterar o firmware.
+- **rosbridge + actions:** a web não usa actions; usa os services `/inspection/*` e o tópico `/inspection/status`.
+- **Pesos `.pt`** não vão para o git. Ficam em `/ros2_ws/models/`; o `detector_node` não baixa nada e encerra se `model_path` não existir (download do `yolo11n.pt` em `docs/testes.md` §2.2).
+- **Detector só em CPU:** sem CUDA e com ~3,7 GB de RAM no WSL. A `imgsz` 640, ~10 quadros/s e ~115 ms de atraso (inferência: 640 = 73 ms, 480 = 46 ms, 320 = 32 ms). Os quadros que chegam durante a inferência são descartados de propósito.
+- **`f_x` depende da resolução:** mudar a resolução do `camera_node` ou trocar de câmera (OAK-D) invalida a calibração.
+- **Atraso da imagem em rotinas que movem os eixos:** espere o eixo parar E descarte os alvos com `header.stamp` anterior à parada.
+- **Ctrl+C em nós com `SignalHandlerOptions.NO`:** o `KeyboardInterrupt` só chega quando a thread principal volta ao Python. Use laço com `spin_once(timeout_sec=0.1)`, como no `scan_node`.
+- **Futures fora dos callback groups:** no rclpy do Humble, os callbacks de `add_done_callback` rodam como tasks do executor, sem respeitar os callback groups. Com `MultiThreadedExecutor`, proteja o estado com um lock, como no `inspection_manager`.
+- **CLI do ROS lenta:** no volume 9p, `ros2 topic echo`/`hz` leva vários segundos para começar. Para medir, prefira um script `rclpy` ou espere mais.
+- **Disco:** `/ros2_ws` é o `C:` do Windows, com pouco espaço. Nunca grave imagens cruas com `ros2 bag` por longos períodos (~20 MB/s); coleta e ensaios usam MP4.

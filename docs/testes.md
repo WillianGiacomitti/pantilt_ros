@@ -119,7 +119,7 @@ Com a página aberta, o botão STOP faz o mesmo.
 
 ## 1. pantilt_hardware
 
-**O que valida:** a comunicação com a ESP32 (`serial_bridge_node`), a telemetria dos encoders, os limites de ângulo e o fail-safe, e a arbitração de comandos (`command_mux`).
+**O que valida:** a comunicação com a ESP32 (`serial_bridge_node`), a telemetria (contagem de passos), os limites de ângulo e o fail-safe, e a arbitração de comandos (`command_mux`).
 
 Os dois nós sobem juntos pelo `hardware.launch.py`.
 
@@ -183,7 +183,7 @@ ros2 service call /ptu/set_zero std_srvs/srv/Trigger     # esperado: success=Tru
 
 ### 1.2 Checagem da telemetria
 
-Confirma que a posição em `/joint_states` (lida dos encoders AS5600) acompanha o movimento real. **Não use `/control/scan` nem nada em malha fechada antes de estes testes passarem nos dois eixos.** Um encoder ruim produz um ângulo falso e plausível, e os limites do bridge e o `scan_node` confiam nele (histórico em `docs/diagnostico_encoders.md`).
+Confirma que a posição em `/joint_states` (contagem de passos do firmware, relativa ao zero manual) acompanha o movimento real. **Não use `/control/scan` nem nada em malha fechada antes de estes testes passarem nos dois eixos.** Sem encoder, um passo perdido ou uma escala errada (micropasso, redução) produz um ângulo falso e plausível, e os limites do bridge e o `scan_node` confiam nele. Confira o ângulo real com uma referência externa (ex.: transferidor ou inclinômetro do celular).
 
 Com o launch da seção 1.1 rodando:
 
@@ -263,7 +263,7 @@ Para registrar: `ros2 bag record /ptu/cmd_vel_auto /ptu/cmd_vel_web /ptu/cmd_pos
 ### Preste atenção
 
 - **Nenhum `ERRO 4: Fail-safe acionado`** pode aparecer em `/ptu/errors` com o nó parado. Se aparecer, o heartbeat não está a 5 Hz.
-- Os erros 8 a 18 do firmware (ímã do encoder, passos perdidos, driver, temperatura, limite do firmware, home) aparecem em `/ptu/errors` com a descrição. Os de encoder, passos e driver se repetem a cada 2 s enquanto a condição durar. `Código de erro desconhecido (N)` indica que o firmware tem um código novo que o `serial_protocol.py` ainda não conhece.
+- Os erros 12 a 17 do firmware (driver, temperatura, limite do firmware) aparecem em `/ptu/errors` com a descrição; os de driver se repetem a cada 2 s enquanto a condição durar. Os códigos de encoder, passos perdidos e home (1, 2, 8 a 11 e 18) são legado e não devem aparecer (architecture.md §8). `Código de erro desconhecido (N)` indica que o firmware tem um código novo que o `serial_protocol.py` ainda não conhece.
 - Perto de ±29° podem surgir os erros 16/17 (limite de software **do firmware**). Anote qual limite age primeiro, o do bridge ou o do firmware.
 - Se no teste 3 da seção 1.3 o pan passar de 29° de forma relevante, aumente `limit_margin_deg` no `params.yaml`.
 - Limitação conhecida: se o mux for morto com `kill -9` com o eixo em movimento, nada envia o zero, e o heartbeat do bridge impede o fail-safe do firmware. Só os limites de ângulo param o eixo nesse caso.
@@ -461,7 +461,7 @@ Para registrar (opcional): `ros2 bag record /perception/detections /perception/t
 - o retorno ao *home*;
 - as recusas e as interrupções.
 
-O valor medido e a comparação com o FOV do datasheet ficam para a tarefa B. Precisa da ESP32 e da câmera. **Faça antes a seção 1.2:** o ajuste confia no ângulo do encoder.
+Precisa da ESP32 e da câmera. **Faça antes a seção 1.2:** o ajuste confia no ângulo da telemetria (contagem de passos).
 
 **Preparação** (um terminal para cada comando, todos com a seção 0 aplicada):
 
@@ -517,7 +517,7 @@ Para registrar: `ros2 bag record /perception/target /joint_states /ptu/cmd_pos_a
 - **Interpretação** (architecture.md §4.10):
   - RMS abaixo de ~2 px é bom;
   - resíduos grandes e sistemáticos nas pontas indicam distorção: reduza `max_angle_deg`;
-  - resíduos grandes e dispersos indicam o encoder;
+  - resíduos grandes e dispersos indicam passos perdidos;
   - `f_x` longe de `(W/2)/tan(FOV_h/2)` em mais de ~15% é motivo para desconfiar.
 - **Sentido dos eixos:** a resposta diz para que lado o alvo anda com cada eixo positivo. Anote: isso adianta o `invert_pan`/`invert_tilt` da tarefa E.
 - **Junta que não para:** `o pan parou em X°, a Y° do alvo ...` mostra que o firmware para fora da tolerância. Aumente `settle_tol_deg`; o ajuste usa o ângulo medido, não o comandado. Já `não parou ... (velocidade V°/s)` com o eixo visivelmente parado indica velocidade da telemetria ruidosa em repouso (seção 1.2, teste 5).
@@ -647,7 +647,6 @@ Para registrar: `ros2 bag record /joint_states /ptu/cmd_vel_auto /ptu/cmd_vel /p
 
 - **Nenhum eixo pode chegar ao batente.** Se isso acontecer, pare na hora e volte à seção 1.2: a causa mais provável é telemetria errada.
 - Se nenhum eixo se mover por mais de 3 s com velocidade comandada, a varredura aborta com `Nenhum eixo se moveu em 3 s ...` (eixo travado, no limite do bridge ou com sentido de giro invertido). Esse aborto leva 3 s: fique com o STOP à mão.
-- Pequenas correções no eixo que não faz parte do trecho (ex.: o tilt se mexendo enquanto o pan varre) são conhecidas: o nó corrige o ruído de leitura desse eixo. As melhorias estão listadas em `docs/diagnostico_encoders.md` §4 e ainda não foram aplicadas.
 - Perto de cada alvo a velocidade cai (até 2°/s); a ultrapassagem deve ficar abaixo de ~1°. Anote se passar disso.
 - A varredura usa ±28° e o bridge limita em ±29°: o log `Limite de ângulo atingido` não deve aparecer. Se aparecer, a ultrapassagem está grande demais.
 

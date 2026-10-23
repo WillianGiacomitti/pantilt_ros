@@ -23,7 +23,7 @@ def test_fabrica_pid():
     assert isinstance(c, Controlador)
 
 
-@pytest.mark.parametrize('nome', ['fuzzy', 'lqr', ''])
+@pytest.mark.parametrize('nome', ['lqr', ''])
 def test_fabrica_recusa(nome):
     with pytest.raises(ValueError):
         criar_controlador(nome, {})

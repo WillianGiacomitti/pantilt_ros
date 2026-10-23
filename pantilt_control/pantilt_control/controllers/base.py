@@ -60,5 +60,6 @@ def criar_controlador(nome: str, params: dict) -> Controlador:
         from pantilt_control.controllers.pid import ControladorPID
         return ControladorPID(**params)
     if nome == 'fuzzy':
-        raise ValueError('controlador fuzzy ainda não implementado (use "pid")')
+        from pantilt_control.controllers.fuzzy import ControladorFuzzy
+        return ControladorFuzzy(**params)
     raise ValueError(f'controlador desconhecido: "{nome}" (opções: {", ".join(CONTROLADORES)})')

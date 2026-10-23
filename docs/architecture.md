@@ -6,7 +6,8 @@ Este documento é a **fonte da verdade** para nomes de nós, tópicos, services,
 
 - **Autor:** Willian Luiz Giacomitti
 - **Orientador:** Prof. Dr. Ronnier Frates Rohrich
-- **Versão do documento:** 0.9 (22/10/2026): análise dos ensaios detalhada (seção 4.11: goal principal, janelas das métricas, formato do resumo, figuras e comando `analisar_ensaios`)
+- **Versão do documento:** 1.0 (23/10/2026): documento alinhado ao código (modelo do TCC no `params.yaml`, `equipment.yaml` com as classes do dataset, telemetria pela contagem de passos e zero manual, auto home e encoders como legado do firmware, dependências entre pacotes, campos extras do `experiment_recorder` e da análise)
+  - 0.9 (22/10/2026): análise dos ensaios detalhada (seção 4.11: goal principal, janelas das métricas, formato do resumo, figuras e comando `analisar_ensaios`)
   - 0.8 (22/10/2026): bloco Ensaio da página detalhado (seção 4.8)
   - 0.7 (22/10/2026): imagens do `experiment_recorder` detalhadas (nomes e momentos dos snapshots, `video_frames.csv`, campo `imagens` no `resumo.json`)
   - 0.6 (22/10/2026): aquisição de dados dos ensaios (novo `experiment_recorder` no pacote `pantilt_experiment`, `/control/servo_debug` no `visual_servo_node`, `/perception/timing` no `detector_node`, métricas ampliadas na seção 10)
@@ -45,7 +46,7 @@ Fora de escopo nesta versão: rastreador multiobjeto com IDs (ByteTrack etc.). N
 3. **O gerenciador decide, os demais executam.** Apenas o `inspection_manager` conhece a máquina de estados.
 4. **Actions para tarefas longas.** Varredura e centralização são actions: têm feedback contínuo, podem ser canceladas e terminam com sucesso ou falha.
 5. **O operador sempre tem prioridade** sobre o modo automático.
-6. **Unidades SI em todos os tópicos** (rad, rad/s, conforme REP-103). Graus só aparecem em parâmetros de configuração, com o sufixo `_deg` no nome, e na interface web.
+6. **Unidades SI em todos os tópicos** (rad, rad/s, conforme REP-103). Graus só aparecem com o sufixo `_deg` no nome: em parâmetros de configuração, nos campos voltados ao operador da action `Scan` (`speed_deg_s`, `pan_deg`, `tilt_deg`) e do service `StartCapture` (`speed_deg_s`), e na interface web.
 7. **Segurança em camadas.** Fail-safe no firmware (500 ms sem comunicação), watchdog de comando no `command_mux` e limites de ângulo no `serial_bridge_node`.
 
 ---
@@ -101,6 +102,14 @@ O `pantilt_experiment` também fica fora do fluxo: só observa os tópicos e gra
 
 O `calibration_node` também fica fora do fluxo de inspeção: é uma rotina chamada pelo operador para estimar a distância focal em pixels, de que o `visual_servo_node` depende (seção 4.10).
 
+Por serem auxiliares ao desenvolvimento, `calibration_node`, `capture_node` e `experiment_recorder` não aparecem no diagrama acima.
+
+Dependências de código entre pacotes (além do `pantilt_interfaces`):
+
+- `pantilt_manager` usa o leitor do `equipment.yaml` do `pantilt_perception` (`detection.load_equipment`), o mesmo do `detector_node`;
+- `pantilt_dataset` usa o limitador de taxa do `pantilt_perception` (`camera_source.FrameThrottle`);
+- `pantilt_experiment` usa o escritor de vídeo do `pantilt_dataset` (`video_recorder.VideoRecorder`).
+
 ---
 
 ## 4. Nós
@@ -146,13 +155,15 @@ Executa a YOLO (Ultralytics), aplica o filtro de classe e seleciona o alvo.
 
 | Parâmetro | Padrão | Descrição |
 |---|---|---|
-| `model_path` | `/ros2_ws/models/yolo11n.pt` | Pesos (arquivo fora do git) |
-| `equipment_file` | `config/equipment_coco_test.yaml` (caminho absoluto no `params.yaml`) | Mapeamento de equipamentos; `config/equipment.yaml` depois do treino |
+| `model_path` | `/ros2_ws/models/equipment.pt` | Pesos do modelo do TCC (arquivo fora do git) |
+| `equipment_file` | `config/equipment.yaml` (caminho absoluto no `params.yaml`) | Mapeamento de equipamentos |
 | `conf_threshold` | 0.5 | Confiança mínima |
 | `imgsz` | 640 | Tamanho de inferência |
 | `device` | `cpu` | `cpu` ou `cuda:0` |
 | `publish_debug_image` | true | Publica a imagem com bboxes para a web |
 | `publish_timing` | true | Publica `/perception/timing` |
+
+Para testar o fluxo sem o modelo do TCC, use `model_path: /ros2_ws/models/yolo11n.pt` (COCO) com o `config/equipment_coco_test.yaml` (seção 7), no `detector_node` e no `inspection_manager`. É o padrão do `declare_parameter` no código.
 
 ### 4.3 `inspection_manager` (pantilt_manager)
 
@@ -171,7 +182,7 @@ O `/inspection/list_equipment` lista o `equipment.yaml` sem cruzar com as classe
 
 | Parâmetro | Padrão | Descrição |
 |---|---|---|
-| `equipment_file` | `config/equipment_coco_test.yaml` (caminho absoluto no `params.yaml`) | O mesmo arquivo do `detector_node`; `config/equipment.yaml` depois do treino |
+| `equipment_file` | `config/equipment.yaml` (caminho absoluto no `params.yaml`) | O mesmo arquivo do `detector_node` |
 | `confirm_frames` | 3 | Frames consecutivos com alvo para confirmar detecção |
 | `scan_timeout_s` | 60.0 | Tempo máximo de varredura |
 | `max_reacquire` | 2 | Perdas consecutivas do alvo que ainda levam a nova varredura |
@@ -188,7 +199,7 @@ Servidor da action `/control/scan`. Executa uma varredura em zigue-zague: percor
 - **Parada:** publica velocidade zero uma vez ao terminar, ser cancelado ou abortar.
 - **Aborto:** para e aborta com o motivo em `message` em dois casos:
   - sem `/joint_states` por mais de 0,5 s;
-  - com velocidade comandada, nenhum eixo se move por mais de 3 s. É o caso de eixo travado ou de sentido de giro invertido, que leva o eixo ao limite do bridge. O jog do operador move o eixo e não dispara o aborto.
+  - com velocidade comandada, nenhum eixo se move por mais de 3 s. É o caso de sentido de giro invertido, que leva o eixo ao limite do bridge (ou do firmware), onde ele para. Como a posição vem da contagem de passos (seção 8), um eixo travado mecanicamente não aparece em `/joint_states` e não é detectado. O jog do operador move o eixo e não dispara o aborto.
 - **Término normal:** ao fim do padrão, `completed=true`. Se `timeout_s` esgotar antes, o goal termina com `completed=false`, sem ser abortado.
 - **Goals recusados:** velocidade negativa ou acima de 30°/s, e timeout negativo.
 
@@ -211,12 +222,12 @@ A lei clássica de IBVS, `v_c = −λ·L⁺·e`, é uma ação proporcional apli
 #### Pipeline (cinco estágios)
 
 1. **Conversão.** `θ_pan = atan(error_x / f_x)` e `θ_tilt = atan(error_y / f_y)`, com `f_x` e `f_y` vindos de `/camera/camera_info`. Se ainda não houve `CameraInfo` válido (`f_x > 0`), o goal é **rejeitado** com mensagem explícita.
-2. **Controlador.** Duas instâncias independentes criadas pela fábrica `criar_controlador(nome, params)` de `controllers/base.py`, segundo o parâmetro `controller`. A interface é `compute(erro, dt) -> velocidade`. O `dt` é calculado pelos `header.stamp` das mensagens de alvo, não pelo relógio do laço, porque a taxa do detector varia.
-3. **Saturação e anti-windup.** Saída limitada a `max_vel_deg_s`. O integrador é congelado enquanto a saída está saturada, e o termo integral tem teto próprio (`integral_limit_deg_s`).
+2. **Controlador.** Duas instâncias independentes criadas pela fábrica `criar_controlador(nome, params)` de `controllers/base.py`, segundo o parâmetro `controller`. A interface é `compute(erro, dt) -> velocidade`. O `dt` é calculado pelos `header.stamp` das mensagens de alvo válidas, não pelo relógio do laço, porque a taxa do detector varia. Uma lacuna acima de 0,5 s entre alvos válidos reinicia os controladores (`reset()`).
+3. **Saturação e anti-windup.** Saída limitada a `max_vel_deg_s`. O integrador é congelado enquanto a saída está saturada e o erro empurra no mesmo sentido da saturação (integração condicional: desacumula assim que o erro inverte). O termo integral é guardado como contribuição na saída (rad/s) e tem teto próprio (`integral_limit_deg_s`).
 4. **Supervisão.** Avalia três condições de término e calcula as métricas:
    - **centrado:** `error_px ≤ tolerance_px` continuamente por `hold_time_s`;
    - **perdido:** sem alvo (`detected == false` ou sem mensagem) por `lost_timeout_s`;
-   - **preso no limite:** eixo parado em `/joint_states` (menos de 0,2° de deslocamento) com comando de pelo menos 1°/s no mesmo sentido por mais de `limit_timeout_s`. É o que acontece no limite de software do bridge, que zera o eixo que empurra para fora; cobre também o eixo travado. O nó não conhece os limites do bridge. Sem `/joint_states` recente, essa checagem fica desligada (o bridge, sem telemetria, só aceita parar).
+   - **preso no limite:** eixo parado em `/joint_states` (menos de 0,2° de deslocamento) com comando de pelo menos 1°/s no mesmo sentido por mais de `limit_timeout_s`. É o que acontece no limite de software do bridge, que zera o eixo que empurra para fora. Com a posição vinda da contagem de passos, um eixo travado mecanicamente não é detectado. O nó não conhece os limites do bridge. Sem `/joint_states` recente, essa checagem fica desligada (o bridge, sem telemetria, só aceita parar).
 5. **Publicação.** Publica em `/ptu/cmd_vel_auto` a `publish_rate_hz`, repetindo o último comando calculado por até `cmd_hold_s`. Passado esse tempo sem alvo novo, publica zero. Isso desacopla a taxa do detector (~10 Hz) do watchdog de 0,3 s do `command_mux` e evita movimento aos trancos.
 
 #### Semântica da action
@@ -237,9 +248,9 @@ Em qualquer término, o nó publica velocidade zero antes de responder.
 | Parâmetro | Padrão | Unidade | Descrição |
 |---|---|---|---|
 | `controller` | `pid` | — | `pid` ou `fuzzy` |
-| `pan.kp` / `tilt.kp` | 0.8 | s⁻¹ | equivale ao ganho λ do IBVS; teto teórico ~3 |
-| `pan.ki` / `tilt.ki` | 0.0 | s⁻² | ativar só no ensaio com alvo em movimento |
-| `pan.kd` / `tilt.kd` | 0.0 | — | ativar só após o PI estável |
+| `pan.kp` / `tilt.kp` | 0.8 | s⁻¹ | equivale ao ganho λ do IBVS; teto teórico ~3. No fuzzy, fator de escala (> 0) |
+| `pan.ki` / `tilt.ki` | 0.0 | s⁻² | ativar só no ensaio com alvo em movimento; ignorado no fuzzy |
+| `pan.kd` / `tilt.kd` | 0.0 | — | ativar só após o PI estável; ignorado no fuzzy |
 | `derivative_filter_hz` | 2.0 | Hz | filtro de 1ª ordem na derivada |
 | `max_vel_deg_s` | 20.0 | °/s | saturação da saída |
 | `integral_limit_deg_s` | 10.0 | °/s | teto da contribuição integral |
@@ -270,14 +281,23 @@ pantilt_control/
 └── controllers/
     ├── base.py                   # interface + criar_controlador()
     ├── pid.py                    # PID posicional com anti-windup
-    └── fuzzy.py                  # (depois) Mamdani, mesma interface
+    └── fuzzy.py                  # Sugeno de ordem zero, mesma interface
 ```
 
-A lógica pura fica fora do nó, com testes em pytest, como já foi feito em `scan_pattern.py`. A troca entre PID e fuzzy deve ser apenas o parâmetro `controller`: nenhum outro arquivo muda.
+A lógica pura fica fora do nó, com testes em pytest, como já foi feito em `scan_pattern.py`. A troca entre PID e fuzzy é apenas o parâmetro `controller`: nenhum outro arquivo muda.
+
+#### Controlador fuzzy
+
+Inferência de **Sugeno de ordem zero**: equivale a um Mamdani com conjuntos de saída simétricos e defuzzificação por centroide, mas sem integração numérica.
+
+- **Entradas:** erro angular normalizado (5 conjuntos) e sua variação, com o mesmo filtro de 1ª ordem do PID (3 conjuntos). As pertinências são triângulos uniformes em partição da unidade. São **15 regras** com saída singleton em [−1, 1], e a defuzzificação é por média ponderada. Com só 3 conjuntos no erro, a curva estática seria uma reta e o controlador viraria um PD linear.
+- **Normalização sem parâmetro novo:** `erro_max = max_output / kp` (o erro em que a ação proporcional saturaria) e `derivada_max = max_output · FATOR_DERIVADA` (constante do módulo, 1,0). Com uma tabela linear, o fuzzy reproduz exatamente o P de ganho `kp`. A comparação com o PID isola, assim, só a não linearidade da base de regras. A tabela padrão tem ganho 0,8 perto do centro e 1,2 longe, e preserva simetria e monotonicidade.
+- **Sem ação integral:** `kp` passa a ser o fator de escala (zero é inválido). `ki`, `kd` e `integral_limit` são aceitos e ignorados.
+- **Diagnóstico:** `termos()` devolve zeros. Como a saída nunca passa de `max_output` (a saturação está no recorte da entrada em ±`erro_max`), `saturado` indica o comando no teto.
 
 #### Sinais
 
-O sentido de giro depende da montagem mecânica. O procedimento de bancada (ganho 0,2 s⁻¹, alvo deslocado para um lado) define `invert_pan` e `invert_tilt`, registrados em `docs/testes.md`. O `calibration_node` (seção 4.10) já informa o sentido em que o alvo se desloca na imagem com cada eixo, o que serve de conferência.
+O sentido de giro depende da montagem mecânica. O procedimento de bancada (ganho 0,2 s⁻¹, alvo deslocado para um lado) define `invert_pan` e `invert_tilt`, registrados em `docs/testes.md`. Hoje o `params.yaml` usa `invert_pan: false` e `invert_tilt: true`, que é o sentido previsto pela calibração e já centralizou na inspeção, mas ainda sem o registro formal. O `calibration_node` (seção 4.10) já informa o sentido em que o alvo se desloca na imagem com cada eixo, o que serve de conferência.
 
 ### 4.6 `command_mux` (pantilt_hardware)
 
@@ -328,7 +348,7 @@ A página `index.html` é servida por HTTP e se comunica via rosbridge (roslib.j
 
 A web usa services mais o tópico de status, e não actions diretamente, porque o suporte a actions do ROS 2 no rosbridge/roslibjs do Humble é limitado.
 
-A página também tem um painel de coleta de dataset (seção 4.9), que usa os services `/capture/*` e o tópico `/capture/status`.
+A página também tem um painel de coleta de dataset (seção 4.9), que usa os services `/capture/*` e o tópico `/capture/status`. Na aba Coleta, o vídeo passa a `/camera/image_raw`, que é o que o `capture_node` grava.
 
 Na aba Inspeção, um bloco **Ensaio** configura o `experiment_recorder` (seção 4.11) pelo `/experiment/configure` (rótulo, observação e modo de imagem) e mostra pelo `/experiment/status` se a inspeção está sendo gravada, com o rótulo e o número da repetição:
 
@@ -378,12 +398,12 @@ e_i = k · tan(θ_i − φ)        f = |k|
 ```
 
 - `e_i` é o erro publicado pelo detector (`error_x` no pan, `error_y` no tilt), medido em relação ao centro geométrico da imagem;
-- `φ` é a direção (desconhecida) do alvo em relação ao zero do encoder;
+- `φ` é a direção (desconhecida) do alvo em relação ao zero dos eixos (`/ptu/set_zero`);
 - o sinal de `k` indica para que lado o alvo se desloca na imagem quando o eixo gira no sentido positivo. O nó informa esse sentido, mas ele não entra no arquivo.
 
 **O ponto principal fica fixo no centro geométrico** (`c_x = W/2`, `c_y = H/2`). Sob rotação pura, um deslocamento de `c` e um de `φ` produzem quase o mesmo efeito na imagem: eles só se distinguem pela curvatura da tangente, que muda ~3% numa grade de ±10°. Uma simulação com 7 pontos a ±10° e 1 px de ruído deu `c` com desvio de ±30 px quando livre, e ainda piorou `f` (±4 px contra ±3 px com `c` fixo; ±19 px contra ±6 px numa grade de ±6°). Como o detector e o `visual_servo_node` medem o erro em relação ao centro geométrico, fixar `c` é também coerente com o uso. O ponto principal só é observável pela calibração por tabuleiro.
 
-Ajustar várias amostras por mínimos quadrados, em vez de usar a fórmula de dois pontos, dá um resíduo que denuncia encoder ruim ou distorção e dispensa centralizar o alvo com precisão.
+Ajustar várias amostras por mínimos quadrados, em vez de usar a fórmula de dois pontos, dá um resíduo que denuncia passos perdidos ou distorção e dispensa centralizar o alvo com precisão.
 
 #### Interface
 
@@ -410,10 +430,10 @@ Falhando qualquer uma, o service retorna `success=false` com a razão. O nó **n
 1. Registra a posição inicial (*home*) a partir de `/joint_states`.
 2. **Sondagem:** move o pan `±probe_deg`, mede o deslocamento e estima um `f` grosseiro.
 3. **Grade em cruz adaptativa:** com o `f` grosseiro, escolhe `n_points` ângulos simétricos em torno do *home*. O maior deles é aquele cujo deslocamento previsto fica em torno de 35% da meia-dimensão do quadro (largura no pan, altura no tilt), limitado a `max_angle_deg`. Varre o pan com o tilt no *home* e depois o tilt com o pan no *home*, sempre do ângulo mais negativo para o mais positivo (mesmo sentido de aproximação). A cruz evita o acoplamento entre os eixos e mantém cada ajuste unidimensional.
-4. Em cada ponto: envia a posição por `/ptu/cmd_pos_auto` e espera a junta estabilizar (`|θ − θ_alvo| < settle_tol_deg` com velocidade próxima de zero). Depois espera `settle_extra_s` e coleta `samples_per_point` mensagens de alvo **cujo `header.stamp` seja posterior ao instante de parada**, por causa dos ~115 ms de atraso da imagem. Guarda a mediana do erro e a mediana do ângulo medido nessa janela.
+4. Em cada ponto: envia a posição por `/ptu/cmd_pos_auto` e espera a junta estabilizar (`|θ − θ_alvo| < settle_tol_deg` com velocidade próxima de zero), por até 10 s. Depois espera `settle_extra_s` e coleta, por até 3 s, `samples_per_point` mensagens de alvo **cujo `header.stamp` seja posterior ao instante de parada**, por causa dos ~115 ms de atraso da imagem. Guarda a mediana do erro e a mediana do ângulo medido nessa janela.
 5. Pontos sem detecção são descartados, com aviso no log. Menos de `min_points` válidos em algum eixo aborta a calibração.
 6. Retorna ao *home* e espera estabilizar. O nó não publica velocidade zero: um `CMD_VEL` nulo logo depois de um `CMD_POS` interromperia o movimento no firmware.
-7. Ajusta os dois modelos por mínimos quadrados não lineares (Levenberg-Marquardt implementado com numpy, sem dependência nova). O chute inicial vem da fórmula de dois pontos com `φ = 0`.
+7. Ajusta os dois modelos por mínimos quadrados não lineares (Levenberg-Marquardt implementado com numpy, sem dependência nova). O chute inicial vem da fórmula de dois pontos nos extremos da grade, com `φ` no centro da grade (o *home*, a no máximo 1° de zero).
 8. Grava `config/camera_intrinsics.yaml` no formato padrão do ROS (`image_width`, `image_height`, `camera_name`, `camera_matrix`, `distortion_model`, `distortion_coefficients` zerados, `rectification_matrix`, `projection_matrix`). Devolve na mensagem `f_x`, `f_y`, `c_x`, `c_y`, o resíduo RMS em px por eixo, o número de pontos usados, o FOV implícito (`2·atan(W / 2f_x)` e `2·atan(H / 2f_y)`) e o sentido de cada eixo.
 
 **Término e retorno ao *home*:**
@@ -443,10 +463,10 @@ Falhando qualquer uma, o service retorna `success=false` com a razão. O nó **n
 
 - resíduo RMS abaixo de ~2 px: bom;
 - resíduo alto, com padrão sistemático nas pontas da grade: distorção radial. Reduza `max_angle_deg` ou faça a calibração por tabuleiro;
-- resíduo alto e disperso: provável erro de encoder;
-- `f_x` distante de `(W/2)/tan(FOV_h/2)` em mais de ~15% (FOV do datasheet): desconfie do encoder ou do FOV declarado.
+- resíduo alto e disperso: prováveis passos perdidos;
+- `f_x` distante de `(W/2)/tan(FOV_h/2)` em mais de ~15% (FOV do datasheet): desconfie da escala da contagem de passos (micropasso, redução) ou do FOV declarado.
 
-A calibração por tabuleiro de xadrez (OpenCV) continua sendo o método de referência e permanece como script offline, não como nó. Ela é obrigatória se a OAK-D entrar no projeto ou se a distorção se mostrar relevante.
+A calibração por tabuleiro de xadrez (OpenCV) continua sendo o método de referência. Ela seria um script offline, não um nó, e ainda não existe no repositório. Ela é obrigatória se a OAK-D entrar no projeto ou se a distorção se mostrar relevante.
 
 ### 4.11 `experiment_recorder` (pantilt_experiment)
 
@@ -489,7 +509,7 @@ O `/experiment/configure` define o **rótulo** do ensaio (ex.: `degrau_kp0.8`), 
 
 **Formato dos CSVs:** cabeçalho na primeira linha, separador vírgula, booleanos como `1`/`0` e números reais com 9 algarismos significativos (legível pelo `numpy.genfromtxt(..., delimiter=',', names=True)`). Os tempos são arredondados a 0,1 ms.
 
-**`resumo.json`:** rótulo, repetição, observação, equipamento, modo, modo de imagem, início e fim (absolutos), duração, desfecho com a última mensagem do `/inspection/status` (inspeção) ou do resultado da `Center` (goal direto), lista de goals `Center` e `Scan` com instantes e resultado completo, número de readquisições, `f_x` e `f_y` do `/camera/camera_info`, parâmetros de `visual_servo_node`, `inspection_manager`, `detector_node` e `scan_node` lidos no início (services `list_parameters`/`get_parameters` de cada nó; nó fora do ar fica registrado como ausente), o commit do `pantilt_ros` (hash, branch e se havia alterações locais em arquivos versionados; lido quando o nó sobe), o número de linhas de cada CSV, as linhas descartadas por fila cheia e o campo `imagens`. Esse campo traz:
+**`resumo.json`:** rótulo, repetição, observação, origem (`inspecao` ou `direto`), equipamento, modo, modo de imagem, início e fim (absolutos; o início também em tempo ROS, `inicio_ros_s`), duração, desfecho com a última mensagem do `/inspection/status` (inspeção) ou do resultado da `Center` (goal direto), o motivo da interrupção (se houve), lista de goals `Center` e `Scan` com instantes e resultado completo, número de readquisições (entradas em CENTERING menos 1; só em inspeções), `f_x`, `f_y`, `c_x`, `c_y` e a resolução do último `/camera/camera_info`, `pre_s` e `tail_s`, parâmetros de `visual_servo_node`, `inspection_manager`, `detector_node` e `scan_node` lidos no início (services `list_parameters`/`get_parameters` de cada nó; nó fora do ar fica registrado como ausente), o commit do `pantilt_ros` (hash, branch e se havia alterações locais em arquivos versionados; lido quando o nó sobe), o número de linhas de cada CSV, as linhas descartadas por fila cheia, o erro de escrita (se houve) e o campo `imagens`. Esse campo traz:
 - `snapshots`: lista de `{arquivo, evento, t}`;
 - `video`: `{quadros, descartados, tamanho_diferente, erro}`, ou `null` fora do modo `video`.
 
@@ -559,7 +579,7 @@ O comando `ros2 run pantilt_experiment analisar_ensaios [pasta] [--rotulos ...] 
 
 O comando ignora as pastas que começam com `_` e as gravações sem `resumo.json` (ainda em andamento). Um erro numa gravação vira aviso e não interrompe as demais.
 
-**`metricas.csv`:** uma linha por gravação. Tem as colunas de contexto (rótulo, repetição, pasta, origem, equipamento, modo, desfecho, início, duração, modo de imagem, `controller`, ganhos `pan.kp/ki/kd` e `tilt.kp/ki/kd`, `f_x`, `f_y`) e as métricas da seção 10. Uma métrica que não se aplica, ou que não pôde ser calculada, fica vazia (NaN).
+**`metricas.csv`:** uma linha por gravação. Tem as colunas de contexto (rótulo, repetição, pasta, origem, equipamento, modo, desfecho, sucesso, início, duração, modo de imagem, `controller`, ganhos `pan.kp/ki/kd` e `tilt.kp/ki/kd`, `max_vel_deg_s`, `f_x`, `f_y`, número de goals `Center` e readquisições, estas lidas do `resumo.json`) e as métricas da seção 10. Uma métrica que não se aplica, ou que não pôde ser calculada, fica vazia (NaN).
 
 - **Goal principal:** é o goal `Center` da primeira convergência (o primeiro com `centered=true` no `center_feedback.csv`); se nenhum convergiu, é o primeiro goal. Desse goal saem `t_c`, `e_r`, `M_p`, IAE e `e_d`. Readquisições e sucesso valem para a gravação inteira.
 - **Segmento:** são as linhas do `servo.csv` com `t_rx` entre o início e o fim do goal no `resumo.json`; o `servo.csv` não tem a identificação do goal. O `center_feedback.csv` tem essa identificação (coluna `goal`) e é filtrado por ela. `t0` é a primeira linha do segmento com `target_visible=1`, pelo `t` (primeira detecção válida).
@@ -568,7 +588,7 @@ O comando ignora as pastas que começam com `_` e as gravações sem `resumo.jso
 - **`M_p`:** é calculado de `t0` ao primeiro `centered=1` (ou ao fim do segmento). A porcentagem é NaN quando `|θ0| < 1°`, porque num eixo quase sem erro inicial ela só mediria ruído.
 - **`t_b` e `t_i`:** só valem para inspeções. O início é o primeiro evento `inspecao` diferente de IDLE no `events.csv`.
 
-**`resumo_por_rotulo.csv`:** formato longo, com uma linha por rótulo e métrica, nas colunas `rotulo`, `metrica`, `n`, `media`, `desvio` (amostral), `minimo` e `maximo`. A métrica `sucesso` tem como média a taxa de sucesso. As gravações com desfecho `interrompido` (Ctrl+C ou disco) ficam no `metricas.csv`, mas não entram no resumo; a contagem delas aparece na métrica `interrompidas`.
+**`resumo_por_rotulo.csv`:** formato longo, com uma linha por rótulo e métrica, nas colunas `rotulo`, `metrica`, `n`, `media`, `desvio` (amostral), `minimo` e `maximo`. A métrica `sucesso` tem como média a taxa de sucesso. As gravações com desfecho `interrompido` (Ctrl+C ou disco) ficam no `metricas.csv`, mas não entram no resumo; a contagem delas aparece na métrica `interrompidas`, e o total de gravações do rótulo, na métrica `gravacoes`.
 
 **Figuras:** PNG e PDF, com 16 cm de largura, textos em português e vírgula decimal.
 
@@ -579,6 +599,8 @@ O comando ignora as pastas que começam com `_` e as gravações sem `resumo.jso
   - juntas em graus.
 
   Linhas verticais marcam o início dos goals, `t0`, o início da permanência e o primeiro `centered`.
+As duas figuras comparativas abaixo deixam de fora as gravações `interrompido`.
+
 - `figuras/comparativo_metricas.png|pdf`: boxplots por rótulo de `t_c`, `e_r`, IAE, `M_p` (o maior dos dois eixos, em graus) e `e_d`, mais a taxa de sucesso.
 - `figuras/comparativo_respostas.png|pdf`: `error_px` × tempo desde `t0` no goal principal, com as repetições sobrepostas e um painel por rótulo.
 
@@ -590,7 +612,7 @@ O comando ignora as pastas que começam com `_` e as gravações sem `resumo.jso
 
 | Tópico | Tipo | Publica | Assina | QoS |
 |---|---|---|---|---|
-| `/camera/image_raw` | `sensor_msgs/Image` | camera_node | detector_node | sensor data |
+| `/camera/image_raw` | `sensor_msgs/Image` | camera_node | detector_node, capture_node, web_video_server (aba Coleta) | sensor data |
 | `/camera/camera_info` | `sensor_msgs/CameraInfo` | camera_node | visual_servo_node, calibration_node | sensor data (igual ao da imagem) |
 | `/perception/detections` | `vision_msgs/Detection2DArray` | detector_node | web, rosbag | padrão |
 | `/perception/debug_image` | `sensor_msgs/Image` | detector_node | web_video_server | sensor data |
@@ -677,18 +699,18 @@ A seleção da bbox acontece continuamente no `detector_node`. No diagrama, ela 
 
 ## 7. Configuração de equipamentos
 
-O modelo ainda não foi treinado. Por isso, o sistema identifica classes **por nome**, nunca por ID.
+O sistema identifica classes **por nome**, nunca por ID: trocar de modelo não exige mudar o código, só o `equipment.yaml`.
 
-`pantilt_bringup/config/equipment.yaml` (classes do TCC, seção 3.3):
+`pantilt_bringup/config/equipment.yaml` (classes do TCC, seção 3.3; é o arquivo em uso, com o modelo `equipment.pt`):
 
 ```yaml
 equipment:
   amortecedor:
     label: "Amortecedor de vibração"
-    class_name: "amortecedor"
+    class_name: "amortecedor_vibracao"
   esfera:
     label: "Esfera de sinalização"
-    class_name: "esfera"
+    class_name: "esfera_sinalizacao"
   isolador_bastao:
     label: "Isolador bastão"
     class_name: "isolador_bastao"
@@ -697,9 +719,9 @@ equipment:
     class_name: "isolador_disco"
 ```
 
-O campo `class_name` deve ser igual ao nome da classe no dataset. Ajuste depois de rotular o dataset, se os nomes forem outros.
+O campo `class_name` deve ser igual ao nome da classe no dataset (`model.names` do `equipment.pt`). A chave é o que a interface e os services usam.
 
-`pantilt_bringup/config/equipment_coco_test.yaml` serve para testar o fluxo completo antes do modelo existir, usando o `yolo11n.pt` pré-treinado no COCO:
+`pantilt_bringup/config/equipment_coco_test.yaml` serve para testar o fluxo completo sem o modelo do TCC, usando o `yolo11n.pt` pré-treinado no COCO (seção 4.2):
 
 ```yaml
 equipment:
@@ -712,6 +734,9 @@ equipment:
   celular:
     label: "Celular (teste COCO)"
     class_name: "cell phone"
+  tv:
+    label: "TV (teste COCO)"
+    class_name: "tv"
 ```
 
 ---
@@ -732,10 +757,12 @@ Formato do frame: `[0xA5][0x5A][TYPE][LEN][PAYLOAD...][CRC8]`. O CRC-8 usa o pol
 | `MSG_HEARTBEAT` | 0x06 | bidirecional | — |
 | `MSG_ERROR` | 0x07 | ESP32 → host | uint8 code (`ERR_*`) |
 | `MSG_BOOT_INFO` | 0x08 | ESP32 → host | uint8 reset_reason, uint32 free_heap |
-| `MSG_HOME_REQ` | 0x09 | host → ESP32 | uint8 eixo (0 pan, 1 tilt, 2 ambos); definido no firmware, ainda não usado pelo host |
-| `MSG_HOME_ACK` | 0x0A | ESP32 → host | uint8 eixo, uint8 sucesso; definido no firmware, ainda não usado pelo host |
+| `MSG_HOME_REQ` | 0x09 | host → ESP32 | **legado:** auto home, fora do projeto; ainda definido no protocolo, não usado pelo host |
+| `MSG_HOME_ACK` | 0x0A | ESP32 → host | **legado:** idem; o bridge ignora o frame |
 
-Os códigos `ERR_*` do `MSG_ERROR` estão em `SerialProtocol.h` e espelhados em `serial_protocol.py` (`ERROR_CODES`).
+Os códigos `ERR_*` do `MSG_ERROR` estão em `SerialProtocol.h` e espelhados em `serial_protocol.py` (`ERROR_CODES`). Os códigos de encoder (1, 2, 8 e 9), de passos perdidos (10 e 11, que comparavam encoder e passos) e de falha do auto home (18) são **legado**: continuam no protocolo, mas não se aplicam ao sistema atual.
+
+**Posição e zero.** O mecanismo não tem encoders nem auto home. A posição em `MSG_TELEMETRY` (e em `/joint_states`) vem da **contagem de passos** dos motores no firmware, relativa ao zero. O zero é definido manualmente: o operador leva o mecanismo ao centro mecânico pelo jog e chama `/ptu/set_zero` (`MSG_SET_ZERO_REQ`). Os limites de ângulo do bridge e do firmware são relativos a esse zero. Um passo perdido desloca a posição informada sem nenhum aviso, até o próximo `/ptu/set_zero`.
 
 A telemetria é enviada a 20 Hz. O fail-safe do firmware para os motores após 500 ms sem nenhum frame recebido.
 
@@ -747,8 +774,7 @@ A telemetria é enviada a 20 Hz. O fail-safe do firmware para os motores após 5
 |---|---|---|
 | Firmware | fail-safe de 500 ms | perda de comunicação com o host |
 | Firmware | watchdog de tasks (3 s) | travamento do firmware |
-| Firmware | limites por software | colisão mecânica |
-| Firmware (futuro) | home por fim de curso |
+| Firmware | limites por software (relativos ao zero manual) | colisão mecânica |
 | `serial_bridge_node` | limites de ângulo por software | comandos fora da faixa física |
 | `command_mux` | watchdog de comando (0,3 s) | nó de controle travado com velocidade não nula |
 | `command_mux` | prioridade do operador | conflito entre modo automático e manual |
@@ -773,12 +799,10 @@ Métricas complementares, calculadas pelo `analisar_ensaios` a partir das pastas
 | IAE | `servo.csv` (`error_px`) | integral de `\|error_px\|` no tempo (regra do trapézio sobre o `header.stamp`), da primeira detecção válida do goal até o início da janela de permanência (CENTER) ou até o fim (TRACK), em px·s |
 | Tempo de busca *t_b* | `events.csv` | do início da inspeção (saída do IDLE) à primeira entrada em CENTERING |
 | Tempo total *t_i* | `events.csv` + `servo.csv` | do início da inspeção ao primeiro `centered=true` |
-| Readquisições | `events.csv` | entradas em CENTERING menos 1 |
+| Readquisições | `resumo.json` (contado pelo `experiment_recorder` a partir de `/inspection/status`) | entradas em CENTERING menos 1 |
 | Sucesso | `resumo.json` | desfecho `centralizado` (CENTER) ou `rastreou` (TRACK, chegou a `centered=true`) |
-| Saturação | `servo.csv` | % das amostras com `saturated` em algum eixo |
+| Saturação | `servo.csv` | % das amostras com alvo visível que têm `saturated` em algum eixo |
 | Desempenho do detector | `timing.csv` | taxa (inverso do intervalo médio entre `header.stamp`), inferência e atraso médios e percentil 95 |
-
----
 
 ---
 
@@ -799,7 +823,7 @@ O container clona o `pantilt_ros` em um volume montado (`./ros2_ws:/ros2_ws`). A
 A ordem prioriza uma fatia vertical funcionando antes dos ensaios:
 
 1. `pantilt_dockerfile`: volume, clone, dependências e entrypoint ocioso.
-2. `pantilt_interfaces` (este commit).
+2. `pantilt_interfaces`.
 3. `pantilt_hardware`: migrar o bridge e criar o `command_mux`.
 4. `pantilt_perception` usando o `equipment_coco_test.yaml`.
 5. `visual_servo_node` com PID, testado via `ros2 action send_goal` (já permite medir *t_c* e *e_r*). Antes dele: `/ptu/cmd_pos_auto` no `command_mux`, `CameraInfo` no `camera_node` e `calibration_node` (seção 4.10), porque a malha depende da distância focal em pixels.

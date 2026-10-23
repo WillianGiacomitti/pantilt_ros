@@ -65,7 +65,9 @@ scan_node:
 
 visual_servo_node:
   ros__parameters:
-    controller: "pid"              # "pid" ou "fuzzy" (fuzzy ainda não implementado)
+    controller: "pid"              # "pid" ou "fuzzy"
+    # no fuzzy, kp é o fator de escala (erro_max = max_vel_deg_s / kp) e ki/kd são
+    # ignorados: deixe-os em 0 nos ensaios com o fuzzy
     # entrada: erro ANGULAR (rad); saída: velocidade angular (rad/s)
     # kp [1/s] equivale ao ganho λ do IBVS (teto teórico ~3); ki [1/s²]; kd [adimensional]
     pan:
